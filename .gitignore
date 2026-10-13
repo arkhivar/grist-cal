@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+.local/
+test-results/
+playwright-report/
+coverage/
+*.grist
+*.grist-*
+*.sqlite*
+*.zip
+.DS_Store
+Thumbs.db
