@@ -104,7 +104,7 @@ export function selectCalendarLessons(snapshot, { teacherIds, search = '' } = {}
     studentNames.set(record.lessonId, names);
   }
   return (snapshot.lessons || []).filter((lesson) => {
-    if (lesson.type !== 'lesson') return false;
+    if (lesson.type !== 'lesson' || lesson.status === 'deleted') return false;
     if (selectedTeachers && !selectedTeachers.has(lesson.teacherId)) return false;
     if (!query) return true;
     const searchable = [lesson.title, lesson.group, lesson.room, lesson.participantText,

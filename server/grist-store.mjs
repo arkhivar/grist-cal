@@ -19,6 +19,14 @@ function uncertain() {
   return Object.assign(failure('SAVE_UNCERTAIN', 'The save could not be confirmed. Keep your draft and retry this same save before starting another edit.', 503),
     { outcomeUnknown: true });
 }
+function deleteUncertain() {
+  return Object.assign(failure('DELETE_UNCERTAIN', 'The deletion could not be confirmed. Retry this same deletion to check safely.', 503),
+    { outcomeUnknown: true });
+}
+function updateRequirements(record, originalFields) {
+  const scalarFields = Object.fromEntries(Object.entries(originalFields).filter(([field]) => !['Teacher', 'Group'].includes(field)));
+  return { id: record.id, ...scalarFields, Calendar_Revision: record.fields.Calendar_Revision };
+}
 function referenceValue(value) {
   if (value == null) return [];
   if (Array.isArray(value) && value[0] === 'L' && value.slice(1).every(id => Number.isSafeInteger(id) && id > 0)) {
@@ -98,6 +106,9 @@ export function createGristStore({ client } = {}) {
     const rowId = isUpdate ? Number(draft.id.slice(6)) : null;
     const current = isUpdate ? tables.lessons.find(record => record.id === rowId) : null;
     if (isUpdate && !current) throw failure('NOT_FOUND', 'This lesson no longer exists. Refresh the calendar.', 404);
+    if (isUpdate && current.fields.Status === 'deleted') {
+      throw failure('VERSION_CONFLICT', 'This lesson was deleted. Refresh the calendar before making another change.', 409);
+    }
     if (isUpdate && !validRevision(current)) {
       throw failure('SCHEMA_ERROR', 'The calendar revision formula is unavailable. Check the Grist calendar setup before saving.', 503);
     }
@@ -148,13 +159,11 @@ export function createGristStore({ client } = {}) {
     delete expected.Calendar_Revision;
     // Grist cannot hash RefLists in an upsert lookup. Its revision formula covers those
     // references plus all scalar fields and is checked atomically by the engine.
-    const requireFields = Object.fromEntries(Object.entries(originalFields)
-      .filter(([field]) => !['Teacher', 'Group'].includes(field)));
     let result;
     let writeFailure;
     try {
       result = await client.request('PUT', '/tables/Calendar_Lessons/records?noadd=true&onmany=none&noparse=true',
-        { records: [{ require: { id: rowId, ...requireFields, Calendar_Revision: current.fields.Calendar_Revision }, fields: changes }] });
+        { records: [{ require: updateRequirements(current, originalFields), fields: changes }] });
     } catch (error) { writeFailure = error; }
     let rows;
     try { rows = await lessonRows(); } catch { throw uncertain(); }
@@ -169,5 +178,56 @@ export function createGristStore({ client } = {}) {
     }
     throw uncertain();
   }
-  return { getSnapshot, saveLesson };
+
+  async function deleteLesson(id, { expectedVersion, mutationId } = {}) {
+    if (typeof id !== 'string' || !/^grist:[1-9][0-9]*$/.test(id) || !Number.isSafeInteger(Number(id.slice(6)))) {
+      throw failure('VALIDATION_ERROR', 'Choose a valid Grist lesson.', 400);
+    }
+    if (typeof mutationId !== 'string' || !UUID.test(mutationId)) {
+      throw failure('VALIDATION_ERROR', 'A valid deletion identifier is required.', 400);
+    }
+    if (typeof expectedVersion !== 'string' || !/^[a-f0-9]{64}$/.test(expectedVersion)) {
+      throw failure('VERSION_CONFLICT', 'Open the lesson again before deleting it.', 409);
+    }
+    const rowId = Number(id.slice(6));
+    const rows = await lessonRows();
+    const current = rows.find(record => record.id === rowId);
+    if (!current) throw failure('NOT_FOUND', 'This lesson no longer exists. Refresh the calendar.', 404);
+    if (!validRevision(current)) {
+      throw failure('SCHEMA_ERROR', 'The calendar revision formula is unavailable. Check the Grist calendar setup before deleting.', 503);
+    }
+    const originalFields = lessonFields(current);
+    if (originalFields.Status === 'deleted') {
+      if (originalFields.Mutation_ID === mutationId) return { id };
+      throw failure('VERSION_CONFLICT', 'This lesson was already deleted. Refresh the calendar.', 409);
+    }
+    if (originalFields.Mutation_ID === mutationId || lessonVersion(current) !== expectedVersion) {
+      throw failure('VERSION_CONFLICT', 'This lesson changed after you opened it. Refresh before deleting it.', 409);
+    }
+    const changes = { Status: 'deleted', Mutation_ID: mutationId };
+    const expected = { ...originalFields, ...changes };
+    delete expected.Calendar_Revision;
+    let result;
+    let writeFailure;
+    try {
+      result = await client.request('PUT', '/tables/Calendar_Lessons/records?noadd=true&onmany=none&noparse=true',
+        { records: [{ require: updateRequirements(current, originalFields), fields: changes }] });
+    } catch (error) { writeFailure = error; }
+    let verified;
+    try { verified = await lessonRows(); } catch { throw deleteUncertain(); }
+    const saved = verified.find(record => record.id === rowId);
+    if (saved && matches(lessonFields(saved), expected)) {
+      if (!validRevision(saved)) throw deleteUncertain();
+      return { id };
+    }
+    const explicitMiss = Array.isArray(result?.recordIds?.[0]) && result.recordIds[0].length === 0;
+    if (explicitMiss || (saved && lessonVersion(saved) !== expectedVersion)) {
+      throw failure('VERSION_CONFLICT', 'This lesson changed while deleting it. Refresh before trying again.', 409);
+    }
+    if (writeFailure?.mayHaveMutated === false) {
+      throw failure('DELETE_FAILED', 'Grist did not accept the deletion. The lesson has been kept; please try again.', writeFailure.status || 503);
+    }
+    throw deleteUncertain();
+  }
+  return { getSnapshot, saveLesson, deleteLesson };
 }

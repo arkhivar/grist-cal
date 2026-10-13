@@ -14,6 +14,7 @@ function checkSnapshot(value) {
 
 async function request(path, options = {}) {
   const writing = options.method === 'POST';
+  const deleting = path === '/api/lessons/delete';
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45000);
   try {
@@ -21,14 +22,16 @@ async function request(path, options = {}) {
     try {
       response = await fetch(path, { cache: 'no-store', credentials: 'same-origin', ...options, signal: controller.signal });
     } catch {
-      throw failure('NETWORK_ERROR', writing
+      throw failure('NETWORK_ERROR', deleting
+        ? 'The connection was interrupted. The deletion may have reached Grist. Retry the same deletion to check safely.' : writing
         ? 'The connection was interrupted. The save may have reached Grist. Retry the same changes to check safely.'
         : 'Could not reach the calendar server. Check the connection and try again.', writing);
     }
     let body;
     try { body = await response.json(); }
     catch {
-      throw failure('INVALID_RESPONSE', writing
+      throw failure('INVALID_RESPONSE', deleting
+        ? 'The deletion response could not be read. Retry the same deletion to check whether it reached Grist.' : writing
         ? 'The save response could not be read. Retry the same changes to check whether they reached Grist.'
         : 'The server response could not be read. Try again.', writing);
     }
@@ -123,6 +126,35 @@ export async function createGristStore({ csrfToken } = {}) {
         }
         pendingMutations.delete(key);
         return { ...copy(result.lesson), ...(result.refreshWarning ? { refreshWarning: true } : {}) };
+      });
+    },
+    deleteLesson(id, { expectedVersion } = {}) {
+      const key = stableKey({ operation: 'delete', id, expectedVersion });
+      const mutationId = pendingMutations.get(key) || crypto.randomUUID();
+      pendingMutations.set(key, mutationId);
+      return sequential(async () => {
+        const result = await request('/api/lessons/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Calendar-Token': csrfToken },
+          body: JSON.stringify({ id, expectedVersion, mutationId }),
+        });
+        if (result?.lessonId !== id) {
+          throw failure('INVALID_RESPONSE', 'The deletion could not be confirmed. Retry the same deletion to check safely.', true);
+        }
+        if (result.snapshot === null && result.refreshWarning === true) {
+          const next = getSnapshot();
+          next.lessons = next.lessons.filter(lesson => lesson.id !== id);
+          publish(next);
+        } else {
+          try { checkSnapshot(result.snapshot); }
+          catch { throw failure('INVALID_RESPONSE', 'The deletion reached the server, but its latest data could not be read. Retry the same deletion to check safely.', true); }
+          if (result.snapshot.lessons.some(lesson => lesson.id === id)) {
+            throw failure('INVALID_RESPONSE', 'The deletion response still contains the lesson. Refresh or retry the same deletion to check safely.', true);
+          }
+          publish(result.snapshot);
+        }
+        pendingMutations.delete(key);
+        return { id, ...(result.refreshWarning ? { refreshWarning: true } : {}) };
       });
     },
   };

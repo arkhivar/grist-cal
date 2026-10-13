@@ -84,7 +84,11 @@ The server binds only to `127.0.0.1`. It validates local hosts, same-origin requ
 
 ## What is saved
 
-Create, edit, move, resize and cancel operations save narrow scheduling fields in `Calendar_Lessons`. Cancellation changes a status and retains the record and its attendance. Deletion is not implemented. Imported source times in `ALL_ATT.datetime` and existing financial inputs are not synchronized or rewritten when a calendar lesson moves.
+Create, edit, move, resize and cancel operations save narrow scheduling fields in `Calendar_Lessons`. Cancellation changes a status and retains the record and its attendance. Imported source times in `ALL_ATT.datetime` and existing financial inputs are not synchronized or rewritten when a calendar lesson moves.
+
+Open the lesson action menu by right-clicking an event, pressing Shift+F10 on a focused event, or using **⋯** in its editor. **Duplicate** opens an unsaved new lesson with copied scheduling details and manual checklist text, `scheduled` status, a fresh identity and no attendance. Only Save creates the new record; the original lesson and its attendance stay unchanged.
+
+**Delete** asks for confirmation and performs a soft deletion: its write changes only `Status` to `deleted` and `Mutation_ID`. The lesson row, other values and every `ALL_ATT.Calendar_Lesson` link remain intact, while the event disappears from all calendar views. Deleted rows are counted separately from visible lessons, invalid lessons and pending imports. To restore one, change its Grist `Status` to `scheduled` or `cancelled`, then refresh the calendar. There is no in-app undo.
 
 The editor's Group input changes the freeform `Group_Label` only. It preserves an imported lesson's original `Group` references. New lessons do not select a group reference yet.
 
@@ -97,5 +101,7 @@ DateTime values are stored in Grist as epoch seconds with `Asia/Vladivostok` col
 The server checks the editor's saved version and performs a conditional Grist upsert using the scalar `Calendar_Revision` formula. The formula includes the reference-list identities, avoiding Grist's unhashable-list error for direct RefList predicates. Attendance import uses `Calendar_Source_Revision` in the same way. Formula values are read, never assigned by lesson/import writes.
 
 New lessons have a stable client-generated UUID. Each edit has a mutation ID. Readback and those identities help resolve a response lost after a successful write. A confirmed version conflict keeps the draft and asks the user to reopen current data. An uncertain save keeps the draft and offers a safe retry; the editor is not locked. A failed refresh after a confirmed save does not turn that save into a reported failure.
+
+Delete uses the same revision check. A failed or stale delete leaves the event visible. A retry with the same delete mutation ID can confirm a deletion that already succeeded; a different stale mutation is rejected. Saving an old editor draft cannot restore a deleted lesson.
 
 Run `node scripts/check.mjs` for the automated checks. Live sandbox results are in [STATE.md](STATE.md), and browser interaction evidence is maintained separately in [BROWSER_CHECKS.md](BROWSER_CHECKS.md).

@@ -232,3 +232,84 @@ test('invalid server configuration or unavailable initial data fail without a de
   response = json({ error: { code: 'GRIST_UNAVAILABLE', message: 'Grist is unavailable.' } }, 503);
   await assert.rejects(createGristStore({ csrfToken: token }), { code: 'GRIST_UNAVAILABLE' });
 });
+
+test('a lost delete response retains the lesson locally and retries with the same mutation identity', async t => {
+  const submitted = [];
+  const before = snapshot();
+  t.mock.method(globalThis, 'fetch', async (path, options) => {
+    if (path === '/api/snapshot') return json(before);
+    assert.equal(path, '/api/lessons/delete');
+    assert.equal(options.method, 'POST');
+    assert.equal(options.headers['X-Calendar-Token'], token);
+    submitted.push(JSON.parse(options.body));
+    if (submitted.length === 1) throw new TypeError('Synthetic lost deletion response');
+    return json({ lessonId: lesson().id, snapshot: snapshot([]) });
+  });
+  const store = await createGristStore({ csrfToken: token });
+  await assert.rejects(store.deleteLesson(lesson().id, { expectedVersion: 1 }), { code: 'NETWORK_ERROR', outcomeUnknown: true });
+  assert.deepEqual(store.getSnapshot(), before);
+  assert.deepEqual(await store.deleteLesson(lesson().id, { expectedVersion: 1 }), { id: lesson().id });
+  assert.equal(submitted[0].mutationId, submitted[1].mutationId);
+  assert.equal(submitted[1].id, lesson().id);
+  assert.equal(submitted[1].expectedVersion, 1);
+  assert.equal(store.getSnapshot().lessons.length, 0);
+  assert.deepEqual(store.getSnapshot().attendance, before.attendance);
+});
+
+test('an acknowledged delete removes only its lesson when the follow-up snapshot cannot refresh', async t => {
+  const before = snapshot([lesson(), lesson({ id: 'another-lesson' })]);
+  t.mock.method(globalThis, 'fetch', async path => path === '/api/snapshot' ? json(before)
+    : json({ lessonId: lesson().id, snapshot: null, refreshWarning: true }));
+  const store = await createGristStore({ csrfToken: token });
+  let published;
+  store.subscribe(value => { published = value; });
+  const result = await store.deleteLesson(lesson().id, { expectedVersion: 1 });
+  assert.deepEqual(result, { id: lesson().id, refreshWarning: true });
+  assert.deepEqual(store.getSnapshot().lessons, [before.lessons[1]]);
+  assert.deepEqual(store.getSnapshot().attendance, before.attendance);
+  assert.deepEqual(store.getSnapshot().teachers, before.teachers);
+  published.lessons.length = 0;
+  assert.equal(store.getSnapshot().lessons.length, 1);
+});
+
+test('failed, stale and unverifiable deletes preserve the browser snapshot', async t => {
+  const before = snapshot();
+  let response;
+  t.mock.method(globalThis, 'fetch', async path => path === '/api/snapshot' ? json(before) : response());
+  const store = await createGristStore({ csrfToken: token });
+  for (const [code, status, unknown] of [['DELETE_FAILED', 503, false], ['VERSION_CONFLICT', 409, false], ['DELETE_UNCERTAIN', 503, true]]) {
+    response = () => json({ error: { code, message: 'Deletion failed safely.', outcomeUnknown: unknown } }, status);
+    await assert.rejects(store.deleteLesson(lesson().id, { expectedVersion: 1 }), { code, outcomeUnknown: unknown });
+    assert.deepEqual(store.getSnapshot(), before);
+  }
+  response = () => json({ lessonId: 'different-lesson', snapshot: snapshot([]) });
+  await assert.rejects(store.deleteLesson(lesson().id, { expectedVersion: 1 }), { code: 'INVALID_RESPONSE', outcomeUnknown: true });
+  response = () => json({ lessonId: lesson().id, snapshot: before });
+  await assert.rejects(store.deleteLesson(lesson().id, { expectedVersion: 1 }), { code: 'INVALID_RESPONSE', outcomeUnknown: true });
+  assert.deepEqual(store.getSnapshot(), before);
+});
+
+test('a refresh during deletion waits for the committed result and cannot restore the deleted lesson', async t => {
+  const deleteStarted = deferred();
+  const deleteResponse = deferred();
+  let persisted = snapshot();
+  let reads = 0;
+  t.mock.method(globalThis, 'fetch', async path => {
+    if (path === '/api/snapshot') { reads++; return json(persisted); }
+    assert.equal(path, '/api/lessons/delete');
+    deleteStarted.resolve();
+    return deleteResponse.promise;
+  });
+  const store = await createGristStore({ csrfToken: token });
+  const deleting = store.deleteLesson(lesson().id, { expectedVersion: 1 });
+  await deleteStarted.promise;
+  const refreshing = store.refresh();
+  await Promise.resolve();
+  assert.equal(reads, 1);
+  persisted = snapshot([]);
+  deleteResponse.resolve(json({ lessonId: lesson().id, snapshot: persisted }));
+  await Promise.all([deleting, refreshing]);
+  assert.equal(reads, 2);
+  assert.equal(store.getSnapshot().lessons.length, 0);
+  assert.equal(store.getSnapshot().attendance.length, 1);
+});

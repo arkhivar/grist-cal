@@ -189,9 +189,16 @@ export function normalizeSnapshot({ attendance = [], performance = [], folks = [
   for (const row of attendance) addTeacher(refs(fieldsOf(row).per));
   const invalidLessons = [];
   let pendingImportLessonCount = 0;
+  let deletedLessonCount = 0;
   const normalizedLessons = [];
   for (const record of lessons) {
     const fields = fieldsOf(record);
+    // Retain the source row and attendance links; deletion only hides the event.
+    // Tombstones are neither invalid schedules nor imports waiting for a link.
+    if (fields.Status === 'deleted') {
+      if (positiveId(record.id)) deletedLessonCount += 1;
+      continue;
+    }
     const teacher = addTeacher(refs(fields.Teacher));
     const start = epochToIso(fields.Start);
     const end = epochToIso(fields.End);
@@ -250,6 +257,7 @@ export function normalizeSnapshot({ attendance = [], performance = [], folks = [
       source: 'grist', lessonCount: normalizedLessons.length,
       importedLessonCount: normalizedLessons.filter(lesson => lesson.origin === 'attendance-import').length,
       pendingImportLessonCount,
+      deletedLessonCount,
       attendanceRowCount: validAttendanceRows,
       linkedAttendanceRowCount: linkedRows,
       unlinkedAttendanceRowCount: validAttendanceRows - linkedRows,

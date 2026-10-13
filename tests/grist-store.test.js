@@ -365,3 +365,99 @@ test('an explicit upstream rejection is sanitized and does not pretend to be a s
     error => error.code === 'SAVE_FAILED' && error.status === 502 && !error.message.includes('secret'));
   assert.equal(client.tables.Calendar_Lessons.length, 1);
 });
+
+test('delete marks only the lesson status and mutation, preserving attendance and all other record data', async () => {
+  const client = mockClient();
+  const store = createGristStore({ client });
+  const before = clone(client.tables);
+  const lesson = (await store.getSnapshot()).lessons[0];
+  const result = await store.deleteLesson(lesson.id, { expectedVersion: lesson.version, mutationId: MUTATION });
+  assert.deepEqual(result, { id: lesson.id });
+  assert.deepEqual(client.tables.ALL_ATT, before.ALL_ATT);
+  assert.equal(client.tables.Calendar_Lessons.length, 1);
+  const { Calendar_Revision, ...fields } = client.tables.Calendar_Lessons[0].fields;
+  const { Calendar_Revision: oldRevision, ...originalFields } = before.Calendar_Lessons[0].fields;
+  assert.deepEqual(fields, { ...originalFields, Status: 'deleted', Mutation_ID: MUTATION });
+  assert.notEqual(Calendar_Revision, oldRevision);
+  assert.deepEqual(client.writes[0].body.records[0].fields, { Status: 'deleted', Mutation_ID: MUTATION });
+  assert.equal((await store.getSnapshot()).lessons.length, 0);
+  assert.equal((await store.getSnapshot()).attendance[0].lessonId, lesson.id);
+});
+
+test('delete retry acknowledges only its own mutation and stale edits cannot resurrect a deleted lesson', async () => {
+  const client = mockClient();
+  const store = createGristStore({ client });
+  const lesson = (await store.getSnapshot()).lessons[0];
+  const options = { expectedVersion: lesson.version, mutationId: MUTATION };
+  await store.deleteLesson(lesson.id, options);
+  assert.deepEqual(await store.deleteLesson(lesson.id, options), { id: lesson.id });
+  assert.equal(client.writes.length, 1);
+  await assert.rejects(store.deleteLesson(lesson.id, { ...options, mutationId: OTHER_MUTATION }), { code: 'VERSION_CONFLICT', status: 409 });
+  await assert.rejects(store.saveLesson({ ...lesson, title: 'Stale edit' }, { expectedVersion: lesson.version, mutationId: OTHER_MUTATION }),
+    { code: 'VERSION_CONFLICT', status: 409 });
+  assert.equal(client.writes.length, 1);
+  assert.equal(client.tables.Calendar_Lessons[0].fields.Status, 'deleted');
+});
+
+test('delete and edit races use atomic revision checks so one operation cannot overwrite the other', async () => {
+  let waiting = 0;
+  let release;
+  const barrier = new Promise(resolve => { release = resolve; });
+  const client = mockClient({ beforeMutation: async () => { if (++waiting === 2) release(); await barrier; } });
+  const store = createGristStore({ client });
+  const attendance = clone(client.tables.ALL_ATT);
+  const lesson = (await store.getSnapshot()).lessons[0];
+  const results = await Promise.allSettled([
+    store.deleteLesson(lesson.id, { expectedVersion: lesson.version, mutationId: MUTATION }),
+    store.saveLesson({ ...lesson, room: 'Concurrent room' }, { expectedVersion: lesson.version, mutationId: OTHER_MUTATION }),
+  ]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(results.find(result => result.status === 'rejected').reason.code, 'VERSION_CONFLICT');
+  assert.deepEqual(client.tables.ALL_ATT, attendance);
+});
+
+test('delete rejects missing identifiers, stale versions and invalid revision before writing', async () => {
+  const client = mockClient();
+  const store = createGristStore({ client });
+  const lesson = (await store.getSnapshot()).lessons[0];
+  await assert.rejects(store.deleteLesson('invalid', { expectedVersion: lesson.version, mutationId: MUTATION }), { code: 'VALIDATION_ERROR' });
+  await assert.rejects(store.deleteLesson(lesson.id, { expectedVersion: lesson.version }), { code: 'VALIDATION_ERROR' });
+  await assert.rejects(store.deleteLesson(lesson.id, { mutationId: MUTATION }), { code: 'VERSION_CONFLICT' });
+  await assert.rejects(store.deleteLesson('grist:999', { expectedVersion: lesson.version, mutationId: MUTATION }), { code: 'NOT_FOUND' });
+  client.tables.Calendar_Lessons[0].fields.Title = 'Changed elsewhere';
+  await assert.rejects(store.deleteLesson(lesson.id, { expectedVersion: lesson.version, mutationId: MUTATION }), { code: 'VERSION_CONFLICT' });
+  assert.equal(client.writes.length, 0);
+  const invalid = mockClient({ invalidRevision: true });
+  await assert.rejects(createGristStore({ client: invalid }).deleteLesson(lesson.id, { expectedVersion: lesson.version, mutationId: MUTATION }),
+    { code: 'SCHEMA_ERROR' });
+  assert.equal(invalid.writes.length, 0);
+});
+
+test('failed deletes preserve data and unknown outcomes remain explicit without blind retries', async () => {
+  for (const known of [false, true]) {
+    const client = mockClient({ rejectMutation: Object.assign(new Error('private-secret'), { mayHaveMutated: !known, status: 503 }) });
+    const store = createGristStore({ client });
+    const before = clone(client.tables);
+    const lesson = (await store.getSnapshot()).lessons[0];
+    await assert.rejects(store.deleteLesson(lesson.id, { expectedVersion: lesson.version, mutationId: MUTATION }), error =>
+      error.code === (known ? 'DELETE_FAILED' : 'DELETE_UNCERTAIN') && error.status === 503 &&
+      Boolean(error.outcomeUnknown) === !known && !error.message.includes('private-secret'));
+    assert.deepEqual(client.tables, before);
+    assert.equal(client.writes.length, 1);
+  }
+});
+
+test('lost delete responses resolve through readback and retry without a second mutation', async () => {
+  const client = mockClient({ afterMutation: async () => { throw networkFailure(); } });
+  const store = createGristStore({ client });
+  const lesson = (await store.getSnapshot()).lessons[0];
+  const options = { expectedVersion: lesson.version, mutationId: MUTATION };
+  assert.deepEqual(await store.deleteLesson(lesson.id, options), { id: lesson.id });
+  assert.deepEqual(await store.deleteLesson(lesson.id, options), { id: lesson.id });
+  assert.equal(client.writes.length, 1);
+  const unreadable = mockClient({ failReadback: true });
+  await assert.rejects(createGristStore({ client: unreadable }).deleteLesson(lesson.id, options),
+    { code: 'DELETE_UNCERTAIN', status: 503, outcomeUnknown: true });
+  assert.equal(unreadable.tables.Calendar_Lessons[0].fields.Status, 'deleted');
+  assert.equal(unreadable.writes.length, 1);
+});

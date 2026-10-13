@@ -95,3 +95,79 @@ test('conflicts are 409, uncertain outcomes are explicit, and malformed bodies c
     assert.equal((await uncertain.json()).error.outcomeUnknown, true);
   });
 });
+
+test('delete API applies the same origin/token protections and forwards explicit concurrency identity', async () => {
+  const deletions = [];
+  const store = {
+    getSnapshot: async () => ({ teachers: [], lessons: [], attendance: [{ lessonId: 'grist:7' }] }),
+    deleteLesson: async (id, options) => { deletions.push({ id, options }); return { id }; },
+  };
+  await withServer(store, async origin => {
+    const { csrfToken } = await (await fetch(`${origin}/api/config`)).json();
+    const body = JSON.stringify({ id: 'grist:7', expectedVersion: 'expected-revision', mutationId: 'same-deletion' });
+    const headers = { 'Content-Type': 'application/json', 'X-Calendar-Token': csrfToken };
+    const send = (extraHeaders, value = body) => fetch(`${origin}/api/lessons/delete`, {
+      method: 'POST', headers: { ...headers, ...extraHeaders }, body: value,
+    });
+    assert.equal((await send({ 'X-Calendar-Token': '' })).status, 403);
+    assert.equal((await send({ Origin: 'https://example.com' })).status, 403);
+    assert.equal((await send({ 'Sec-Fetch-Site': 'cross-site' })).status, 403);
+    assert.equal((await send({}, '{"draft":{}}')).status, 400);
+    assert.equal((await send({}, '{"id":7}')).status, 400);
+    assert.equal((await send({}, 'null')).status, 400);
+    assert.equal((await fetch(`${origin}/api/lessons/delete`)).status, 405);
+    assert.equal(deletions.length, 0);
+    const response = await send({ Origin: origin });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { lessonId: 'grist:7', snapshot: await store.getSnapshot() });
+    assert.deepEqual(deletions, [{ id: 'grist:7', options: { expectedVersion: 'expected-revision', mutationId: 'same-deletion' } }]);
+  });
+});
+
+test('an acknowledged deletion stays successful when snapshot refresh fails', async () => {
+  await withServer({ deleteLesson: async id => ({ id }), getSnapshot: async () => { throw new Error('private upstream information'); } }, async origin => {
+    const { csrfToken } = await (await fetch(`${origin}/api/config`)).json();
+    const response = await fetch(`${origin}/api/lessons/delete`, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Calendar-Token': csrfToken }, body: '{"id":"grist:7"}' });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { lessonId: 'grist:7', snapshot: null, refreshWarning: true });
+  });
+});
+
+test('save and delete operations share one queue and deletion errors remain explicit', async () => {
+  let releaseSave;
+  let startedSave;
+  const entered = new Promise(resolve => { startedSave = resolve; });
+  const blocked = new Promise(resolve => { releaseSave = resolve; });
+  const calls = [];
+  let deletionCode;
+  const store = {
+    getSnapshot: async () => ({ teachers: [], lessons: [], attendance: [] }),
+    saveLesson: async () => { calls.push('save-start'); startedSave(); await blocked; calls.push('save-end'); return { id: 'grist:7' }; },
+    deleteLesson: async id => {
+      calls.push('delete');
+      if (deletionCode) throw Object.assign(new Error('Safe deletion failure'), { code: deletionCode, outcomeUnknown: deletionCode === 'DELETE_UNCERTAIN' });
+      return { id };
+    },
+  };
+  await withServer(store, async origin => {
+    const { csrfToken } = await (await fetch(`${origin}/api/config`)).json();
+    const post = (path, body) => fetch(origin + path, { method: 'POST', headers: {
+      'Content-Type': 'application/json', 'X-Calendar-Token': csrfToken }, body: JSON.stringify(body) });
+    const saving = post('/api/lessons', { draft: {} });
+    await entered;
+    const deleting = post('/api/lessons/delete', { id: 'grist:7' });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.deepEqual(calls, ['save-start']);
+    releaseSave();
+    assert.equal((await saving).status, 200);
+    assert.equal((await deleting).status, 200);
+    assert.deepEqual(calls, ['save-start', 'save-end', 'delete']);
+    deletionCode = 'VERSION_CONFLICT';
+    assert.equal((await post('/api/lessons/delete', { id: 'grist:7' })).status, 409);
+    deletionCode = 'DELETE_UNCERTAIN';
+    const uncertain = await post('/api/lessons/delete', { id: 'grist:7' });
+    assert.equal(uncertain.status, 503);
+    assert.equal((await uncertain.json()).error.outcomeUnknown, true);
+  });
+});

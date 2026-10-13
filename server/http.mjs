@@ -5,8 +5,8 @@ import path from 'node:path';
 
 const types = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.woff2': 'font/woff2', '.svg': 'image/svg+xml' };
 const allowed = ['/index.html', '/src/', '/vendor/'];
-const statusByCode = { VALIDATION_ERROR: 400, VERSION_CONFLICT: 409, NOT_FOUND: 404, GRIST_AUTH: 502, SCHEMA_ERROR: 503, SAVE_UNCERTAIN: 503 };
-const publicErrors = new Set(['VALIDATION_ERROR', 'VERSION_CONFLICT', 'NOT_FOUND', 'SCHEMA_ERROR', 'SAVE_UNCERTAIN', 'SAVE_FAILED', 'GRIST_ACCESS_DENIED', 'GRIST_REQUEST_FAILED', 'GRIST_RESPONSE_INVALID', 'GRIST_TIMEOUT', 'GRIST_UNAVAILABLE', 'GRIST_REQUEST_INVALID']);
+const statusByCode = { VALIDATION_ERROR: 400, VERSION_CONFLICT: 409, NOT_FOUND: 404, GRIST_AUTH: 502, SCHEMA_ERROR: 503, SAVE_UNCERTAIN: 503, DELETE_UNCERTAIN: 503 };
+const publicErrors = new Set(['VALIDATION_ERROR', 'VERSION_CONFLICT', 'NOT_FOUND', 'SCHEMA_ERROR', 'SAVE_UNCERTAIN', 'SAVE_FAILED', 'DELETE_UNCERTAIN', 'DELETE_FAILED', 'GRIST_ACCESS_DENIED', 'GRIST_REQUEST_FAILED', 'GRIST_RESPONSE_INVALID', 'GRIST_TIMEOUT', 'GRIST_UNAVAILABLE', 'GRIST_REQUEST_INVALID']);
 const fail = (code, message) => Object.assign(new Error(message), { code });
 
 function sameToken(actual, expected) {
@@ -58,16 +58,21 @@ export function createCalendarServer({ root, store = null }) {
         if (pathname === '/api/config' && req.method === 'GET') return json(200, { mode: store ? 'grist' : 'demo', label: store ? 'Grist sandbox' : 'Sample school', csrfToken: store ? csrfToken : null });
         if (!store) return json(404, { error: { code: 'NOT_CONNECTED', message: 'This server is running the local demo.' } });
         if (pathname === '/api/snapshot' && req.method === 'GET') return json(200, await snapshot());
-        if (pathname === '/api/lessons' && req.method === 'POST') {
+        if (['/api/lessons', '/api/lessons/delete'].includes(pathname) && req.method === 'POST') {
           if (!sameToken(req.headers['x-calendar-token'], csrfToken)) return text(403, 'Reload the calendar before saving');
           const body = await readJson(req);
-          if (!body || typeof body !== 'object' || Array.isArray(body) || !body.draft) throw fail('VALIDATION_ERROR', 'Supply a lesson draft.');
+          const deleting = pathname === '/api/lessons/delete';
+          if (!body || typeof body !== 'object' || Array.isArray(body) || (deleting ? typeof body.id !== 'string' : !body.draft)) {
+            throw fail('VALIDATION_ERROR', deleting ? 'Supply a lesson identifier.' : 'Supply a lesson draft.');
+          }
           const save = writeTail.then(async () => {
-            const lesson = await store.saveLesson(body.draft, { expectedVersion: body.expectedVersion, mutationId: body.mutationId });
+            const options = { expectedVersion: body.expectedVersion, mutationId: body.mutationId };
+            const saved = deleting ? await store.deleteLesson(body.id, options) : await store.saveLesson(body.draft, options);
+            const result = deleting ? { lessonId: saved.id } : { lesson: saved };
             snapshotRequest = null;
             // A committed write remains successful even when a subsequent read fails.
-            try { return { lesson, snapshot: await store.getSnapshot() }; }
-            catch { return { lesson, snapshot: null, refreshWarning: true }; }
+            try { return { ...result, snapshot: await store.getSnapshot() }; }
+            catch { return { ...result, snapshot: null, refreshWarning: true }; }
           });
           writeTail = save.catch(() => {});
           return json(200, await save);

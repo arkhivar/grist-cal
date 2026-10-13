@@ -52,4 +52,20 @@ Verified on 2026-10-13 against the configured local server at `http://127.0.0.1:
 
 The automated suite additionally covers failed writes, unknown outcomes, idempotent retries, concurrent reference changes, interrupted imports, and preservation of attendance when scheduling changes.
 
+## Duplicate and Delete — 2026-10-14
+
+These new interactions were checked in the synthetic demo using the in-app browser. Browser security blocked access to the live tab on this run, so these menu checks do not establish live browser interaction with Grist.
+
+| Check | Observed result |
+| --- | --- |
+| Event menu | Right-click opens Duplicate/Delete. Shift+F10 opens the menu on a focused event; arrow keys and Enter select an action. |
+| Menu dismissal | Escape dismisses the menu and restores focus. |
+| Duplicate | Opens an unsaved copy with copied details/checklist, scheduled status and a fresh identity. Saving produces a new lesson with zero attendance; the original retains its three attendance records. |
+| Minute input | A school time of 09:10 is accepted and saves; time fields accept whole minutes. |
+| Delete confirmation | Choosing Keep retains the lesson; confirming Delete removes it from the calendar. |
+| Failed delete and retry | Simulated failure leaves all 19 events visible; retry succeeds and reduces the count to 18. |
+| Phone action access | At 390px width, the editor's **⋯** action control and menu remain usable and visible. |
+
+Separate live API checks against an isolated disposable lesson confirmed creation and readback, HTTP 200 for soft deletion, absence from the next normalized snapshot, HTTP 200 when retrying the same delete mutation and HTTP 409 for a stale edit. The deleted row retained its UID and scheduled times. Only the unlinked probe was removed afterward; all 3,211 existing attendance rows retained their checked input values and links. No live Duplicate/Delete menu clicks were performed on this run.
+
 Not established by these checks: physical touch/long-press behavior, Safari/Firefox compatibility, browser timezone emulation, recurring series, or teacher-specific access rules. The local development service account is not a production authorization model.

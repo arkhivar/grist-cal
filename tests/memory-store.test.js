@@ -137,6 +137,75 @@ test('cancelling a lesson keeps the lesson identity and every student attendance
   assert.deepEqual(store.getSnapshot().attendance, before.attendance);
 });
 
+test('soft deletion hides a lesson, retains attendance, and cannot be undone by a stale save', async () => {
+  const store = makeStore();
+  const before = store.getSnapshot();
+  const lesson = before.lessons[0];
+  const notices = [];
+  store.subscribe(snapshot => { notices.push(snapshot); });
+  assert.deepEqual(await store.deleteLesson(lesson.id, { expectedVersion: lesson.version }), { id: lesson.id });
+  const after = store.getSnapshot();
+  assert.deepEqual(after.lessons, before.lessons.slice(1));
+  assert.deepEqual(after.attendance, before.attendance);
+  assert.deepEqual(after.teachers, before.teachers);
+  assert.deepEqual(notices, [after]);
+  assert.deepEqual(await store.refresh(), after);
+  assert.deepEqual(await store.deleteLesson(lesson.id, { expectedVersion: lesson.version }), { id: lesson.id });
+  assert.equal(notices.length, 1);
+  for (const options of [{ expectedVersion: lesson.version }, {}]) {
+    await assert.rejects(store.saveLesson({ id: lesson.id, title: 'Resurrected' }, options), { code: 'NOT_FOUND' });
+  }
+  assert.deepEqual(store.getSnapshot(), after);
+  assert.deepEqual(store.reset(), before);
+});
+
+test('failed and stale deletions are atomic and failure simulation is consumed once', async () => {
+  const store = makeStore();
+  const lesson = store.getSnapshot().lessons[0];
+  const updated = await store.saveLesson({ id: lesson.id, room: 'New room' }, { expectedVersion: lesson.version });
+  const before = store.getSnapshot();
+  let notices = 0;
+  store.subscribe(() => { notices += 1; });
+  await assert.rejects(store.deleteLesson(lesson.id, { expectedVersion: lesson.version }), { code: 'VERSION_CONFLICT' });
+  await assert.rejects(store.deleteLesson('missing'), { code: 'NOT_FOUND' });
+  await assert.rejects(store.deleteLesson(null), { code: 'VALIDATION_ERROR' });
+  store.failNextSave();
+  await assert.rejects(store.deleteLesson(lesson.id, { expectedVersion: updated.version }), { code: 'SAVE_FAILED' });
+  assert.deepEqual(store.getSnapshot(), before);
+  assert.equal(notices, 0);
+  await store.deleteLesson(lesson.id, { expectedVersion: updated.version });
+  assert.equal(notices, 1);
+  assert.deepEqual(store.getSnapshot().attendance, before.attendance);
+});
+
+test('overlapping edit and delete from the same version cannot both commit', async () => {
+  for (const deleteFirst of [true, false]) {
+    const store = makeStore({ delayMs: 10 });
+    const before = store.getSnapshot();
+    const lesson = before.lessons[0];
+    const remove = () => store.deleteLesson(lesson.id, { expectedVersion: lesson.version });
+    const edit = () => store.saveLesson({ id: lesson.id, title: 'Concurrent edit' }, { expectedVersion: lesson.version });
+    const results = await Promise.allSettled(deleteFirst ? [remove(), edit()] : [edit(), remove()]);
+    assert.equal(results[0].status, 'fulfilled');
+    assert.equal(results[1].status, 'rejected');
+    assert.equal(results[1].reason.code, deleteFirst ? 'NOT_FOUND' : 'VERSION_CONFLICT');
+    const current = store.getSnapshot().lessons.find(row => row.id === lesson.id);
+    if (deleteFirst) assert.equal(current, undefined);
+    else assert.equal(current.title, 'Concurrent edit');
+    assert.deepEqual(store.getSnapshot().attendance, before.attendance);
+  }
+});
+
+test('reset prevents an in-flight deletion from removing a restored lesson', async () => {
+  const store = makeStore({ delayMs: 25 });
+  const before = store.getSnapshot();
+  const lesson = before.lessons[0];
+  const pending = store.deleteLesson(lesson.id, { expectedVersion: lesson.version });
+  store.reset();
+  await assert.rejects(pending, { code: 'SAVE_CANCELLED' });
+  assert.deepEqual(store.getSnapshot(), before);
+});
+
 test('reset invalidates an in-flight save, including when IDs are reused', async () => {
   const store = makeStore({ delayMs: 25 });
   const original = store.getSnapshot();

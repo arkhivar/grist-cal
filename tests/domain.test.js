@@ -74,3 +74,13 @@ test('filters combine teachers and search without deriving event identity from a
   assert.equal(selectCalendarLessons(data, { teacherIds: ['mikhail'], search: 'Conversation' }).length, 0);
   assert.ok(selectCalendarLessons(data, { search: '0/4' }).length > 0);
 });
+
+test('event selection excludes deleted lessons even from an unfiltered snapshot', () => {
+  const data = createDemoData('2026-10-13');
+  const deleted = { ...data.lessons[0], status: 'deleted' };
+  const cancelled = { ...data.lessons[1], status: 'cancelled' };
+  const snapshot = { ...data, lessons: [deleted, cancelled, ...data.lessons.slice(2)] };
+  assert.ok(!selectCalendarLessons(snapshot).some(lesson => lesson.id === deleted.id));
+  assert.ok(!selectCalendarLessons(snapshot, { search: deleted.title }).some(lesson => lesson.id === deleted.id));
+  assert.ok(selectCalendarLessons(snapshot).some(lesson => lesson.id === cancelled.id));
+});

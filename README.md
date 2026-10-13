@@ -32,13 +32,14 @@ Without Grist configuration, the command above starts the demo. With configurati
 
 - Day, week, month and agenda views, a mini-calendar, teacher filters and lesson/group/student search.
 - Create and edit lessons; drag to move them and resize to change their duration. In connected mode these changes and cancellation persist in Grist. The editor also provides keyboard-accessible time fields.
+- Right-click an event, press Shift+F10 on a focused event, or use the editor's **⋯** menu to **Duplicate** or **Delete**. Duplicate opens an unsaved copy with a fresh identity, copied details and checklist, scheduled status and no attendance. Delete asks for confirmation, then hides the lesson while preserving its Grist row and attendance links.
 - Read-only attendance linked to each lesson. Connected records are labelled **Recorded in ALL_ATT**; the app does not infer presence or absence from notes or financial fields. Scheduling preserves attendance links and does not change original attendance dates or financial inputs.
 - Manual checklist text, teacher combinations and Unassigned lessons. Conflicting and uncertain saves keep the draft; uncertain saves offer a safe retry.
 - **Refresh data** preserves an open lesson draft. In demo mode, **Reset demo** restores the sample schedule and **Fail the next save** tests failure recovery.
 
 The school timezone is **Asia/Vladivostok**, regardless of the browser's timezone. One scheduled lesson creates one calendar event; each student's attendance remains a separate record linked to that lesson.
 
-Demo changes last only in the current tab's memory. Connected changes remain after reload. Deletion, recurring series, teacher sign-in, production permissions and deployment remain future work; the current server is a local development connection using a service account.
+Demo changes last only in the current tab's memory. Connected changes remain after reload. Deleted lessons can be restored by changing their Grist status to `scheduled` or `cancelled`; there is no in-app undo yet. Recurring series, teacher sign-in, production permissions and deployment remain future work; the current server is a local development connection using a service account.
 
 ## Project notes
 

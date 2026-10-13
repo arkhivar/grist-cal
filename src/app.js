@@ -72,6 +72,7 @@ async function start() {
   let toastTimer;
   let searchTimer;
   let editorOpener;
+  let lessonMenu = null;
   const mobile = window.matchMedia('(max-width: 760px)');
 
   function notify(message, kind = 'success') {
@@ -93,6 +94,7 @@ async function start() {
     $('cancel-editor').disabled = value;
     $('refresh-button').disabled = value || refreshing;
     $('refresh-editor').disabled = value || refreshing;
+    $('lesson-actions').disabled = value || refreshing;
     // Freeze form inputs during submission so a late keystroke cannot be silently lost.
     for (const input of $('lesson-form').querySelectorAll('input,select,textarea')) input.disabled = value;
   }
@@ -143,6 +145,7 @@ async function start() {
 
   function renderEvents() {
     if (!calendar) return;
+    closeLessonMenu();
     calendar.batchRendering(() => {
       calendar.getEventSources().forEach(source => source.remove());
       calendar.addEventSource(eventData());
@@ -196,11 +199,12 @@ async function start() {
     requestAnimationFrame(() => calendar?.updateSize());
   }
 
-  function confirmAction(title, message, label = 'Discard changes') {
+  function confirmAction(title, message, label = 'Discard changes', cancelLabel) {
     $('confirm-title').textContent = title;
     $('confirm-message').textContent = message;
     $('confirm-yes').textContent = label;
-    $('confirm-no').textContent = label === 'Reset demo' ? 'Keep my changes' : 'Keep editing';
+    $('confirm-no').textContent = cancelLabel || (label === 'Reset demo' ? 'Keep my changes' : 'Keep editing');
+    $('confirm-yes').classList.toggle('danger', label === 'Delete lesson');
     $('confirm-dialog').showModal();
     $('confirm-no').focus();
     return new Promise(resolve => {
@@ -227,6 +231,7 @@ async function start() {
   function isDirty() { return editor && JSON.stringify(rawDraft()) !== editor.initial; }
 
   function closeEditor() {
+    closeLessonMenu();
     $('lesson-dialog').close();
     editor = null;
     if (editorOpener?.isConnected && !editorOpener.closest('[inert]') && editorOpener.getClientRects().length) editorOpener.focus({ preventScroll: true });
@@ -255,19 +260,21 @@ async function start() {
     }).join('') : `<div class="empty-attendance">${isLive ? 'No linked attendance records in ALL_ATT. Saving this lesson does not create or mark student attendance.' : 'No student attendance entries yet. Saving this lesson creates its calendar record.'}</div>`;
   }
 
-  function openEditor(lessonId, range = {}) {
-    if (busy) return;
+  function openEditor(lessonId, range = {}, duplicate) {
+    if (busy || refreshing) return;
+    closeLessonMenu();
     const existing = snapshot.lessons.find(lesson => lesson.id === lessonId);
     const day = range.date || focusedDate;
     const startTime = range.start || fromSchoolInput(`${day}T09:00`);
-    const lesson = existing || {
+    const lesson = existing || duplicate || {
       title: '', teacherId: [...selectedTeachers][0] || snapshot.teachers[0]?.id || 'unassigned',
       group: '', start: startTime, end: range.end || new Date(new Date(startTime).getTime() + 3600000).toISOString(),
       room: '', participantText: '', checklist: '', status: 'scheduled', notes: '',
     };
     editorOpener = document.activeElement;
-    $('editor-heading').textContent = existing ? 'Lesson details' : 'Create a lesson';
-    $('editor-eyebrow').textContent = existing ? 'SCHOOL CALENDAR' : 'NEW LESSON';
+    $('editor-heading').textContent = duplicate ? 'Duplicate lesson' : existing ? 'Lesson details' : 'Create a lesson';
+    $('editor-eyebrow').textContent = duplicate ? 'NEW COPY' : existing ? 'SCHOOL CALENDAR' : 'NEW LESSON';
+    $('lesson-actions').hidden = !existing;
     $('editor-version').textContent = isLive ? 'Saves to Grist' : existing ? 'Changes stay in this demo' : 'One lesson · one calendar event';
     $('lesson-teacher').innerHTML = snapshot.teachers.map(t => `<option value="${escape(t.id)}">${escape(t.name)}</option>`).join('');
     for (const input of $('lesson-form').querySelectorAll('[name]')) {
@@ -275,12 +282,105 @@ async function start() {
     }
     $('form-error').hidden = true;
     $('draft-notice').hidden = true;
+    if (duplicate) {
+      $('draft-notice').textContent = 'This is a new lesson. Change its date or details, then save. Attendance is not copied.';
+      $('draft-notice').hidden = false;
+    }
     renderAttendance(existing?.id);
     editor = { id: existing?.id, clientId: crypto.randomUUID(), version: existing?.version, initial: JSON.stringify(rawDraft()) };
     closeMobileSidebar();
     $('lesson-dialog').showModal();
     $('lesson-title').focus();
   }
+
+  function restoreMenuFocus(target) {
+    if (target?.isConnected && !target.closest('[inert]') && target.getClientRects().length) target.focus({ preventScroll: true });
+    else $('sidebar-toggle').focus({ preventScroll: true });
+  }
+
+  function closeLessonMenu(restoreFocus = false) {
+    if (!lessonMenu) return;
+    const target = lessonMenu.opener;
+    lessonMenu = null;
+    $('lesson-menu').hidden = true;
+    target?.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) restoreMenuFocus(target);
+  }
+
+  function openLessonMenu(id, opener, point) {
+    if (busy || refreshing || $('confirm-dialog').open) return;
+    const lesson = snapshot.lessons.find(item => item.id === id);
+    if (!lesson) return;
+    closeLessonMenu();
+    const menu = $('lesson-menu');
+    // A menu opened from the modal must share its top layer and focus scope.
+    ($('lesson-dialog').open ? $('lesson-dialog') : document.body).append(menu);
+    lessonMenu = { lesson: structuredClone(lesson), opener };
+    if (editor?.id === id) lessonMenu.lesson.version = editor.version;
+    menu.setAttribute('aria-label', `Actions for ${lesson.title}`);
+    $('lesson-menu-title').textContent = lesson.title;
+    opener.setAttribute('aria-expanded', 'true');
+    menu.hidden = false;
+    const anchor = opener.getBoundingClientRect();
+    const bounds = menu.getBoundingClientRect();
+    const x = point?.x ?? anchor.right - bounds.width;
+    const y = point?.y ?? anchor.bottom + 5;
+    menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - bounds.width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - bounds.height - 8))}px`;
+    $('duplicate-lesson').focus({ preventScroll: true });
+  }
+
+  async function duplicateLesson() {
+    const target = lessonMenu;
+    if (!target || busy || refreshing) return;
+    closeLessonMenu(true);
+    if (editor && isDirty() && !await confirmAction('Duplicate saved lesson?', 'Your unsaved edits will be discarded. The copy uses the saved lesson details.', 'Duplicate', 'Keep editing')) return;
+    if (editor) closeEditor();
+    const copy = { ...target.lesson, status: 'scheduled' };
+    openEditor(null, {}, copy);
+  }
+
+  async function deleteLesson() {
+    const target = lessonMenu;
+    if (!target || busy || refreshing) return;
+    closeLessonMenu(true);
+    const message = `Remove “${target.lesson.title}” from the calendar? Its attendance records will be kept.${isDirty() ? ' Unsaved edits will be discarded.' : ''}`;
+    if (!await confirmAction('Delete lesson?', message, 'Delete lesson', 'Keep lesson')) return;
+    setBusy(true);
+    armFailure();
+    try {
+      const result = await store.deleteLesson(target.lesson.id, { expectedVersion: target.lesson.version });
+      if (editor?.id === target.lesson.id) closeEditor();
+      else restoreMenuFocus(target.opener);
+      notify(`Lesson deleted${isLive ? ' from the Grist calendar' : ''}. Attendance records were kept.${result.refreshWarning ? ' Other data could not refresh; use Refresh data when connected.' : ''}`);
+    } catch (error) {
+      const message = `${error.message}${error.outcomeUnknown ? ' Refresh to check, or retry deleting this same lesson.' : ''}`;
+      if (editor?.id === target.lesson.id) { $('form-error').textContent = message; $('form-error').hidden = false; }
+      notify(message, 'error');
+    } finally { setBusy(false); restoreMenuFocus(target.opener); }
+  }
+
+  $('duplicate-lesson').addEventListener('click', () => { void duplicateLesson(); });
+  $('delete-lesson').addEventListener('click', () => { void deleteLesson(); });
+  $('lesson-actions').addEventListener('click', () => {
+    if (lessonMenu) closeLessonMenu(true);
+    else if (editor?.id) openLessonMenu(editor.id, $('lesson-actions'));
+  });
+  $('lesson-menu').addEventListener('keydown', event => {
+    const items = [$('duplicate-lesson'), $('delete-lesson')];
+    const current = items.indexOf(document.activeElement);
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault(); event.stopPropagation();
+      items[event.key === 'Home' ? 0 : event.key === 'End' ? 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+    } else if (event.key === 'Escape' || event.key === 'Tab') {
+      event.preventDefault(); event.stopPropagation(); closeLessonMenu(true);
+    }
+  });
+  document.addEventListener('pointerdown', event => {
+    if (lessonMenu && !$('lesson-menu').contains(event.target) && !lessonMenu.opener.contains(event.target)) closeLessonMenu(true);
+  });
+  document.addEventListener('scroll', () => closeLessonMenu(true), true);
+  window.addEventListener('resize', () => closeLessonMenu(true));
 
   async function saveEditor(event) {
     event.preventDefault();
@@ -373,6 +473,7 @@ async function start() {
       return { domNodes: [wrap] };
     },
     datesSet(info) {
+      closeLessonMenu();
       currentStart = info.startStr.slice(0, 10);
       currentEnd = info.endStr.slice(0, 10);
       $('view-title').textContent = info.view.title;
@@ -399,9 +500,18 @@ async function start() {
       info.el.style.setProperty('--teacher-color', info.event.extendedProps.color);
       info.el.tabIndex = 0;
       info.el.setAttribute('role', 'button');
+      info.el.setAttribute('aria-haspopup', 'menu');
+      info.el.setAttribute('aria-expanded', 'false');
+      info.el.setAttribute('aria-controls', 'lesson-menu');
       info.el.setAttribute('aria-label', `${info.event.title}, ${longDate.format(info.event.start)}, ${formatSchoolTime(info.event.start)} to ${formatSchoolTime(info.event.end)}, ${info.event.extendedProps.teacherName}${info.event.extendedProps.status === 'cancelled' ? ', cancelled' : ''}`);
       info.el.addEventListener('keydown', event => {
-        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); openEditor(info.event.id); }
+        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+          event.preventDefault(); event.stopPropagation(); openLessonMenu(info.event.id, info.el);
+        } else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); openEditor(info.event.id); }
+      });
+      info.el.addEventListener('contextmenu', event => {
+        event.preventDefault(); event.stopPropagation();
+        openLessonMenu(info.event.id, info.el, event.clientX || event.clientY ? { x: event.clientX, y: event.clientY } : undefined);
       });
     },
     eventClick(info) { info.jsEvent.preventDefault(); openEditor(info.event.id); },
@@ -500,10 +610,12 @@ async function start() {
   $('lesson-dialog').addEventListener('cancel', event => { event.preventDefault(); void requestCloseEditor(); });
   async function refreshData() {
     if (busy || refreshing) return;
+    closeLessonMenu(true);
     refreshing = true;
     $('refresh-button').disabled = true;
     $('refresh-editor').disabled = true;
     $('save-lesson').disabled = true;
+    $('lesson-actions').disabled = true;
     $('save-state-text').textContent = 'Refreshing…';
     $('save-state').classList.add('is-saving');
     delete $('save-state').dataset.state;
@@ -532,6 +644,7 @@ async function start() {
       $('refresh-button').disabled = busy;
       $('refresh-editor').disabled = busy;
       $('save-lesson').disabled = busy;
+      $('lesson-actions').disabled = busy;
       $('save-state').classList.remove('is-saving');
     }
   }
@@ -553,6 +666,7 @@ async function start() {
   $('help-done').addEventListener('click', () => $('help-dialog').close());
   $('toast-close').addEventListener('click', () => { $('toast').hidden = true; });
   document.addEventListener('keydown', event => {
+    if (lessonMenu) return;
     if (event.key === 'Escape' && document.body.classList.contains('sidebar-open')) { closeMobileSidebar(); return; }
     if (event.ctrlKey || event.metaKey || event.altKey || event.target.closest('input,select,textarea,[contenteditable="true"]') || document.querySelector('dialog[open]')) return;
     if (event.key.toLowerCase() === 'c') { event.preventDefault(); openEditor(); }

@@ -10,7 +10,7 @@ export function createMemoryStore({ anchorDate = schoolToday(), delayMs = 300 } 
   let nextId = 1;
   let failNext = false;
   const subscribers = new Set();
-  const getSnapshot = () => clone(state);
+  const getSnapshot = () => clone({ ...state, lessons: state.lessons.filter(lesson => lesson.status !== 'deleted') });
   const notify = () => {
     for (const callback of [...subscribers]) {
       // The state has already been committed. A broken view must not report a failed save.
@@ -41,7 +41,9 @@ export function createMemoryStore({ anchorDate = schoolToday(), delayMs = 300 } 
         throw storeError('VALIDATION_ERROR', 'Only lessons can be saved through the calendar.');
       }
       const existing = submitted.id ? state.lessons.find(({ id }) => id === submitted.id) : null;
-      if (submitted.id && !existing) throw storeError('NOT_FOUND', 'This lesson no longer exists. Refresh the calendar.');
+      if (submitted.id && (!existing || existing.status === 'deleted')) {
+        throw storeError('NOT_FOUND', 'This lesson no longer exists. Refresh the calendar.');
+      }
       if (existing && expectedVersion !== undefined && expectedVersion !== existing.version) {
         throw storeError('VERSION_CONFLICT', 'This lesson changed after you opened it. Reload it before saving again.');
       }
@@ -62,6 +64,28 @@ export function createMemoryStore({ anchorDate = schoolToday(), delayMs = 300 } 
       }
       notify();
       return clone(candidate);
+    },
+    async deleteLesson(id, { expectedVersion } = {}) {
+      const deleteGeneration = generation;
+      const shouldFail = failNext;
+      failNext = false;
+      if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      if (generation !== deleteGeneration) {
+        throw storeError('SAVE_CANCELLED', 'The demo was reset. Open the lesson again to make changes.');
+      }
+      if (shouldFail) throw storeError('SAVE_FAILED', 'The demo delete failed. The lesson was not deleted; please try again.');
+      if (typeof id !== 'string' || !id) throw storeError('VALIDATION_ERROR', 'Choose a lesson to delete.');
+      const existing = state.lessons.find(lesson => lesson.id === id);
+      if (!existing) throw storeError('NOT_FOUND', 'This lesson no longer exists. Refresh the calendar.');
+      // A repeated request may be recovering from a response lost after deletion.
+      if (existing.status === 'deleted') return { id };
+      if (expectedVersion !== undefined && expectedVersion !== existing.version) {
+        throw storeError('VERSION_CONFLICT', 'This lesson changed after you opened it. Reload it before deleting.');
+      }
+      state.lessons = state.lessons.map(lesson => lesson.id === id
+        ? { ...lesson, status: 'deleted', version: lesson.version + 1 } : lesson);
+      notify();
+      return { id };
     },
     failNextSave() { failNext = true; },
     reset() {

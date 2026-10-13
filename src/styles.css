@@ -238,6 +238,15 @@ body[data-mode="grist"] .teacher-list { max-height: min(30vh, 310px); overflow-y
 
 dialog { padding: 0; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface); box-shadow: 0 12px 50px rgb(24 24 27 / .2); }
 dialog::backdrop { background: rgb(24 24 27 / .24); }
+.lesson-menu { position: fixed; z-index: 60; width: 208px; max-width: calc(100vw - 16px); padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 5px 24px rgb(24 24 27 / .16); }
+.lesson-menu-title { padding: 8px 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.lesson-menu button { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 38px; padding: 9px 10px; border: 0; border-radius: 4px; background: transparent; text-align: left; font-size: 13px; }
+.lesson-menu button:hover, .lesson-menu button:focus-visible { background: #f2f4f7; }
+.lesson-menu .icon { width: 17px; height: 17px; }
+.lesson-menu .delete-menu-item { color: #b23e3e; }
+.lesson-menu .delete-menu-item:hover, .lesson-menu .delete-menu-item:focus-visible { background: #fff2f2; }
+.button.primary.danger { background: #b23e3e; border-color: #b23e3e; color: white; }
+.button.primary.danger:hover { background: #963434; border-color: #963434; }
 .lesson-dialog { width: 550px; max-width: calc(100vw - 36px); max-height: min(88vh, 900px); max-height: min(88dvh, 900px); overflow: hidden; }
 .lesson-dialog form { display: flex; flex-direction: column; max-height: inherit; }
 .dialog-heading { display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; gap: 15px; padding: 20px 23px 17px; border-bottom: 1px solid var(--border); }

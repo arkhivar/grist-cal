@@ -184,6 +184,41 @@ test('imported lessons wait for a source link while calendar-created lessons sta
   assert.equal(imported.fields.Origin, 'attendance-import');
 });
 
+test('soft-deleted lessons stay hidden while attendance links and source values remain intact', () => {
+  const deleted = lessonRecord({ Status: 'deleted', Start: start + 86400, End: start + 90000 });
+  const visible = record(81, { ...deleted.fields, Status: 'scheduled', Origin: 'calendar', Start: start, End: start + 3600 });
+  const attendance = [attendanceRow(1, { Calendar_Lesson: 80, notes: 'Original note' }),
+    attendanceRow(2, { Calendar_Lesson: 80, student: null }), attendanceRow(3)];
+  const source = { attendance, lessons: [deleted, visible], performance, folks };
+  const before = structuredClone(source);
+  const result = normalizeSnapshot(source);
+  assert.deepEqual(result.lessons.map(lesson => lesson.id), ['grist:81']);
+  assert.equal(result.meta.lessonCount, 1);
+  assert.equal(result.meta.deletedLessonCount, 1);
+  assert.equal(result.meta.importedLessonCount, 0);
+  assert.equal(result.meta.pendingImportLessonCount, 0);
+  assert.equal(result.meta.latestLessonDate, '2026-10-13');
+  assert.equal(result.meta.linkedAttendanceRowCount, 2);
+  assert.equal(result.meta.unlinkedAttendanceRowCount, 1);
+  assert.equal(result.meta.danglingAttendanceRowCount, 0);
+  assert.deepEqual(result.meta.invalidLessons, []);
+  assert.deepEqual(result.attendance.filter(row => row.lessonId === 'grist:80').map(row => row.id), ['att:1:1', 'att:2:missing']);
+  assert.ok(result.attendance.every(row => row.status === 'recorded'));
+  assert.deepEqual(source, before);
+});
+
+test('deleted tombstones are counted separately from pending imports and invalid schedules', () => {
+  const result = normalizeSnapshot({ lessons: [lessonRecord({ Status: 'deleted', Start: null, End: null }),
+    record(81, { ...lessonRecord().fields, Status: 'deleted' })] });
+  assert.deepEqual(result.lessons, []);
+  assert.equal(result.meta.deletedLessonCount, 2);
+  assert.equal(result.meta.pendingImportLessonCount, 0);
+  assert.equal(result.meta.lessonCount, 0);
+  assert.equal(result.meta.importedLessonCount, 0);
+  assert.equal(result.meta.latestLessonDate, null);
+  assert.deepEqual(result.meta.invalidLessons, []);
+});
+
 test('CAS values preserve wire representation and versions include identity/provenance but exclude finance', () => {
   const original = lessonRecord({ Teacher: ['L', 18, 17], Checklist: '3/7' });
   const values = lessonFields(original);
