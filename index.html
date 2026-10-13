@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f5f5f4">
+  <meta name="description" content="A standalone school calendar. Local demo with fictional lessons and attendance.">
+  <title>Grist Cal · School calendar</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%232563eb'/%3E%3Cpath d='M10 14h20M14 9v8m12-8v8M11 24h6m6 0h6M11 29h6' stroke='white' stroke-width='2' fill='none'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/vendor/fonts/fonts.css">
+  <link rel="stylesheet" href="/src/styles.css">
+  <script defer src="/vendor/luxon-3.7.2/luxon.min.js"></script>
+  <script defer src="/vendor/fullcalendar-6.1.21/index.global.min.js"></script>
+  <script defer src="/vendor/fullcalendar-luxon3-6.1.21/index.global.min.js"></script>
+  <script type="module" src="/src/app.js"></script>
+</head>
+<body>
+  <svg class="icon-definitions" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></symbol>
+    <symbol id="i-right" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M19 10c0 5-7 11-7 11S5 15 5 10a7 7 0 0 1 14 0Z"/><circle cx="12" cy="10" r="2"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-3a6 6 0 0 1 12 0v3M17 5a3 3 0 0 1 0 6m1 3a5 5 0 0 1 3 5"/></symbol>
+    <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 10a9 9 0 1 1 1 8M3 4v6h6"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 8a2.5 2.5 0 1 1 3.8 2.1c-1 .5-1.3 1-1.3 2.4M12 17h.01"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  </svg>
+  <a class="skip-link" href="#calendar-region">Skip to calendar</a>
+  <div class="app-shell">
+    <header class="app-header">
+      <button id="sidebar-toggle" class="icon-button" aria-label="Toggle sidebar" aria-controls="sidebar" aria-expanded="true" title="Toggle sidebar"><svg class="icon"><use href="#i-menu"/></svg></button>
+      <a class="brand" href="/" aria-label="Grist Cal home"><span class="brand-mark" aria-hidden="true"><span id="brand-day">13</span></span><span>grist<span class="brand-light">cal</span></span></a>
+      <div class="main-navigation">
+        <button id="today-button" class="button">Today</button>
+        <div class="date-arrows"><button id="previous-button" class="icon-button" aria-label="Previous period" title="Previous period"><svg class="icon"><use href="#i-left"/></svg></button><button id="next-button" class="icon-button" aria-label="Next period" title="Next period"><svg class="icon"><use href="#i-right"/></svg></button></div>
+        <h1 id="view-title">School calendar</h1>
+      </div>
+      <div class="header-actions">
+        <label class="search-control"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="search" type="search" placeholder="Search lessons" aria-label="Search lessons"></label>
+        <select id="view-select" class="view-select" aria-label="Calendar view"><option value="timeGridDay">Day</option><option value="timeGridWeek" selected>Week</option><option value="dayGridMonth">Month</option><option value="listWeek">Agenda</option></select>
+        <button id="help-button" class="icon-button" aria-label="Help and keyboard shortcuts" title="Help and keyboard shortcuts"><svg class="icon"><use href="#i-help"/></svg></button>
+        <span class="profile-avatar" aria-label="Demo school">S</span>
+      </div>
+    </header>
+    <div class="app-body">
+      <aside id="sidebar" class="sidebar" aria-label="Calendar sidebar">
+        <button id="create-button" class="create-button"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg><span>Create lesson</span></button>
+        <section class="mini-calendar-section" aria-label="Date picker">
+          <div class="section-heading"><h2 id="mini-title">October 2026</h2><div><button id="mini-previous" class="icon-button small" aria-label="Previous month"><svg class="icon"><use href="#i-left"/></svg></button><button id="mini-next" class="icon-button small" aria-label="Next month"><svg class="icon"><use href="#i-right"/></svg></button></div></div>
+          <div id="mini-calendar" class="mini-calendar"></div>
+        </section>
+        <section class="teacher-section" aria-labelledby="teachers-heading">
+          <div class="section-heading"><h2 id="teachers-heading">Teachers</h2><button id="show-all-teachers" class="text-button">Show all</button></div>
+          <div id="teacher-list" class="teacher-list"></div>
+          <p class="filter-note">Choose whose lessons you see.</p>
+        </section>
+        <div class="sidebar-footer">
+          <div class="timezone-note"><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><div><strong>School time</strong><span>Vladivostok · UTC+10</span></div></div>
+          <section class="demo-card" aria-label="Demo controls"><div class="demo-card-heading"><span class="demo-badge">Demo</span><span>Sample school</span></div><p>Fictional lessons. Changes last until you reset or reload.</p><button id="reset-button" class="text-button"><svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg>Reset demo</button><details class="demo-tools"><summary>Demo tools</summary><label class="failure-option"><input id="fail-next-save" type="checkbox">Fail the next save</label><button id="refresh-button" class="button">Refresh data</button><p>Try a failed move, resize or edit. Your saved schedule will stay intact.</p></details></section>
+        </div>
+      </aside>
+      <button id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Close sidebar" hidden></button>
+      <main id="calendar-region" class="calendar-region" tabindex="-1" aria-label="School calendar">
+        <div class="calendar-context"><div><span class="context-title">School calendar</span><span class="context-divider">/</span><span id="visible-count">Loading lessons</span></div><div class="save-state" id="save-state" role="status"><span class="status-dot"></span><span id="save-state-text">Demo ready</span></div></div>
+        <div class="calendar-frame"><div id="calendar"></div><div id="empty-state" class="empty-state" hidden><span class="empty-icon"><svg class="icon"><use href="#i-search"/></svg></span><h2>No lessons to show</h2><p id="empty-message">Try another week or create a lesson.</p><button id="clear-filters" class="button">Clear filters</button></div></div>
+        <footer class="calendar-footer"><span><span class="shortcut-key">Click</span> an empty slot to create · Drag a lesson to move it</span><span id="timezone-footer">Asia/Vladivostok</span></footer>
+      </main>
+    </div>
+  </div>
+
+  <dialog id="lesson-dialog" class="lesson-dialog" aria-labelledby="editor-heading">
+    <form id="lesson-form" novalidate>
+      <div class="dialog-heading"><div><span class="eyebrow" id="editor-eyebrow">LESSON</span><h2 id="editor-heading">Edit lesson</h2></div><div><button type="button" id="refresh-editor" class="icon-button" aria-label="Refresh lesson data" title="Refresh data; keep your draft"><svg class="icon"><use href="#i-reset"/></svg></button><button type="button" id="close-editor" class="icon-button" aria-label="Close lesson editor"><svg class="icon"><use href="#i-close"/></svg></button></div></div>
+      <div class="dialog-scroll">
+        <div class="form-field title-field"><label for="lesson-title">Lesson title</label><input id="lesson-title" name="title" placeholder="e.g. English · A2" required maxlength="160" autocomplete="off"></div>
+        <div class="form-row"><div class="form-field"><label for="lesson-teacher">Teacher</label><select id="lesson-teacher" name="teacherId" required></select></div><div class="form-field"><label for="lesson-group">Group</label><input id="lesson-group" name="group" placeholder="e.g. Young explorers" maxlength="120"></div></div>
+        <fieldset class="time-fields"><legend><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>School time · Vladivostok (UTC+10)</legend><div class="form-row"><div class="form-field"><label for="lesson-start">Starts</label><input id="lesson-start" name="start" type="datetime-local" step="900" required></div><div class="form-field"><label for="lesson-end">Ends</label><input id="lesson-end" name="end" type="datetime-local" step="900" required></div></div></fieldset>
+        <div class="form-row"><div class="form-field"><label for="lesson-room">Room</label><input id="lesson-room" name="room" placeholder="Room or meeting link" maxlength="120"></div><div class="form-field"><label for="lesson-status">Status</label><select id="lesson-status" name="status"><option value="scheduled">Scheduled</option><option value="cancelled">Cancelled</option></select></div></div>
+        <div class="form-field"><label for="lesson-participants">Participant notes</label><input id="lesson-participants" name="participantText" placeholder="Names or lesson-level participant notes" maxlength="500"></div>
+        <div class="form-row notes-row"><div class="form-field"><label for="lesson-notes">Lesson notes</label><textarea id="lesson-notes" name="notes" placeholder="Anything to prepare or remember" rows="2" maxlength="2000"></textarea></div><div class="form-field checklist-field"><label for="lesson-checklist">Checklist</label><input id="lesson-checklist" name="checklist" placeholder="e.g. 3/7" maxlength="60"><span class="field-hint">Kept manually</span></div></div>
+        <section class="attendance-section" aria-labelledby="attendance-heading"><div class="section-heading"><h3 id="attendance-heading">Student attendance</h3><span id="attendance-count" class="muted"></span></div><div id="attendance-list" class="attendance-list"></div><p class="field-hint">Attendance stays linked when a lesson moves. Scheduling does not mark students present.</p></section>
+        <p id="draft-notice" class="draft-notice" hidden>Saved data changed. Your draft has been kept.</p>
+        <p id="form-error" class="form-error" role="alert" hidden></p>
+      </div>
+      <div class="dialog-footer"><span class="demo-badge">Demo</span><span id="editor-version" class="editor-version">New lesson</span><button type="button" id="cancel-editor" class="button">Cancel</button><button type="submit" id="save-lesson" class="button primary">Save lesson</button></div>
+    </form>
+  </dialog>
+  <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title"><h2 id="confirm-title">Discard unsaved changes?</h2><p id="confirm-message">Your saved lesson will stay as it is.</p><div class="confirm-actions"><button id="confirm-no" class="button">Keep editing</button><button id="confirm-yes" class="button primary">Discard changes</button></div></dialog>
+  <dialog id="help-dialog" class="help-dialog" aria-labelledby="help-title"><div class="dialog-heading"><h2 id="help-title">A little room to plan</h2><button id="close-help" class="icon-button" aria-label="Close help"><svg class="icon"><use href="#i-close"/></svg></button></div><p>This is your standalone school calendar demo. All lessons and students are fictional.</p><dl><dt><kbd>C</kbd></dt><dd>Create a lesson</dd><dt><kbd>T</kbd></dt><dd>Go to today</dd><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Previous / next period</dd><dt><kbd>/</kbd></dt><dd>Search lessons, groups or students</dd><dt><kbd>Esc</kbd></dt><dd>Close an editor or panel</dd></dl><p>Click or drag across empty time to create. Drag a lesson to move it; drag its bottom edge to change its duration. You can also edit every time using the lesson form.</p><p>Teacher filters change what you see. The school timezone stays <strong>Asia/Vladivostok</strong>.</p><button id="help-done" class="button primary">Got it</button></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden><svg class="icon" aria-hidden="true"><use href="#i-check"/></svg><span id="toast-message"></span><button id="toast-close" class="icon-button" aria-label="Dismiss notification"><svg class="icon"><use href="#i-close"/></svg></button></div>
+  <noscript><p class="noscript-message">Enable JavaScript to use the calendar.</p></noscript>
+</body>
+</html>
