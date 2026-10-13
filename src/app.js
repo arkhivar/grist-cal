@@ -1,5 +1,6 @@
 import { SCHOOL_TIME_ZONE, schoolToday, schoolInput, fromSchoolInput, formatSchoolTime, shiftDate, startOfWeek, selectCalendarLessons } from './domain.js';
 import { createMemoryStore } from './memory-store.js';
+import { createGristStore, readCalendarConfig } from './grist-store.js';
 
 const $ = (id) => document.getElementById(id);
 const escape = (value = '') => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -7,27 +8,67 @@ const longDate = new Intl.DateTimeFormat('en-GB', { timeZone: SCHOOL_TIME_ZONE, 
 const monthName = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', month: 'long', year: 'numeric' });
 const dayName = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
-function start() {
+function showStartupFailure(error) {
+  document.querySelector('.app-header').inert = true;
+  $('sidebar').inert = true;
+  $('connection-state').hidden = false;
+  $('connection-state').dataset.state = 'error';
+  $('connection-heading').textContent = 'Calendar could not connect';
+  $('connection-message').textContent = error?.message || 'The calendar could not load. Try again.';
+  $('connection-state').setAttribute('role', 'alert');
+  $('retry-connection').hidden = false;
+  $('retry-connection').onclick = () => location.reload();
+  $('visible-count').textContent = 'Data unavailable';
+  $('save-state-text').textContent = 'Connection failed';
+  $('save-state').dataset.state = 'error';
+  $('calendar-region').setAttribute('aria-busy', 'false');
+}
+
+async function start() {
+  document.querySelector('.app-header').inert = true;
+  $('sidebar').inert = true;
+  $('calendar-region').setAttribute('aria-busy', 'true');
   if (!window.FullCalendar || !window.luxon) {
-    $('visible-count').textContent = 'Calendar assets could not load. Reload to try again.';
-    return;
+    throw new Error('Calendar assets could not load. Reload to try again.');
   }
+  const config = await readCalendarConfig();
+  const isLive = config.mode === 'grist';
+  const sourceLabel = isLive ? (config.label || 'Grist sandbox') : 'Sample school';
+  const readyText = isLive ? 'Connected to Grist' : 'Demo ready';
+  document.body.dataset.mode = config.mode;
+  document.title = `Grist Cal · ${isLive ? sourceLabel : 'Demo'}`;
+  for (const id of ['mode-badge', 'context-mode', 'editor-mode']) $(id).textContent = isLive ? 'Live' : 'Demo';
+  $('data-label').textContent = sourceLabel;
+  $('data-description').textContent = isLive ? 'Edits save to your Grist sandbox and remain after reload.' : 'Fictional lessons. Changes last until you reset or reload.';
+  $('mode-card').setAttribute('aria-label', isLive ? 'Grist connection and refresh' : 'Demo controls');
+  $('reset-button').hidden = isLive;
+  $('demo-tools').hidden = isLive;
+  $('help-introduction').textContent = isLive
+    ? `This calendar is connected to ${sourceLabel}. Creating, editing, moving and resizing lessons saves to Grist. Student attendance from ALL_ATT is shown read-only; scheduling does not mark attendance.`
+    : 'This is your standalone school calendar demo. All lessons and students are fictional.';
+  $('attendance-hint').textContent = isLive
+    ? 'Read-only records from ALL_ATT. Recorded rows do not establish whether a student was present. Attendance stays linked when a lesson moves; scheduling does not mark attendance.'
+    : 'Attendance stays linked when a lesson moves. Scheduling does not mark students present.';
+  document.querySelector('.profile-avatar').setAttribute('aria-label', sourceLabel);
   let anchorDate = schoolToday();
-  const requestedDate = new URLSearchParams(location.search).get('date');
+  let requestedDate = new URLSearchParams(location.search).get('date');
   if (requestedDate) {
-    try { fromSchoolInput(`${requestedDate}T12:00`); anchorDate = requestedDate; } catch { /* Ignore invalid demo date overrides. */ }
+    try { fromSchoolInput(`${requestedDate}T12:00`); if (!isLive) anchorDate = requestedDate; }
+    catch { requestedDate = null; }
   }
-  const store = createMemoryStore({ anchorDate, delayMs: 450 });
+  $('connection-message').textContent = isLive ? 'Loading lessons and linked attendance from Grist…' : 'Preparing your fictional school schedule…';
+  const store = isLive ? await createGristStore({ csrfToken: config.csrfToken }) : createMemoryStore({ anchorDate, delayMs: 450 });
   let snapshot = store.getSnapshot();
   let selectedTeachers = new Set(snapshot.teachers.map(t => t.id));
-  let miniMonth = anchorDate.slice(0, 7);
-  let focusedDate = anchorDate;
-  let currentStart = startOfWeek(anchorDate);
+  let focusedDate = requestedDate || anchorDate;
+  let miniMonth = focusedDate.slice(0, 7);
+  let currentStart = startOfWeek(focusedDate);
   let currentEnd = shiftDate(currentStart, 7);
   let calendar;
   let busy = false;
   let editor = null;
   let editorSaving = false;
+  let refreshing = false;
   let toastTimer;
   let searchTimer;
   let editorOpener;
@@ -43,18 +84,21 @@ function start() {
 
   function setBusy(value) {
     busy = value;
-    $('save-state-text').textContent = value ? 'Saving…' : 'Demo ready';
+    if (value) delete $('save-state').dataset.state;
+    $('save-state-text').textContent = value ? 'Saving…' : readyText;
     $('save-state').classList.toggle('is-saving', value);
-    $('save-lesson').disabled = value;
+    $('save-lesson').disabled = value || refreshing;
     $('save-lesson').textContent = value && editorSaving ? 'Saving…' : 'Save lesson';
     $('close-editor').disabled = value;
     $('cancel-editor').disabled = value;
+    $('refresh-button').disabled = value || refreshing;
+    $('refresh-editor').disabled = value || refreshing;
     // Freeze form inputs during submission so a late keystroke cannot be silently lost.
     for (const input of $('lesson-form').querySelectorAll('input,select,textarea')) input.disabled = value;
   }
 
   function armFailure() {
-    if ($('fail-next-save').checked) {
+    if (!isLive && $('fail-next-save').checked) {
       store.failNextSave();
       $('fail-next-save').checked = false;
     }
@@ -66,7 +110,7 @@ function start() {
 
   function eventData() {
     return getVisibleLessons().map(lesson => {
-      const teacher = snapshot.teachers.find(t => t.id === lesson.teacherId);
+      const teacher = snapshot.teachers.find(t => t.id === lesson.teacherId) || { name: 'Unassigned', color: '#71717a' };
       return {
         id: lesson.id, title: lesson.title, start: lesson.start, end: lesson.end,
         backgroundColor: `${teacher.color}20`, borderColor: teacher.color,
@@ -83,8 +127,18 @@ function start() {
     const filtered = selectedTeachers.size !== snapshot.teachers.length || $('search').value.trim();
     $('visible-count').textContent = `${count} ${count === 1 ? 'lesson' : 'lessons'}${filtered ? ' shown' : ''}`;
     $('empty-state').hidden = count > 0;
-    $('empty-message').textContent = !selectedTeachers.size ? 'Select a teacher in the sidebar to see their lessons.' : $('search').value.trim() ? 'Try a different search or choose more teachers.' : 'Your week has room. Create a lesson or return to the demo week.';
-    $('clear-filters').textContent = filtered ? 'Clear filters' : 'Go to demo week';
+    const latestDate = latestLessonDate();
+    $('empty-message').textContent = !selectedTeachers.size ? 'Select a teacher in the sidebar to see their lessons.' : $('search').value.trim() ? 'Try a different search or choose more teachers.' : isLive ? (latestDate ? 'There are no lessons in this period. Jump to the latest scheduled lesson or create one.' : 'Your Grist calendar has room. Create the first lesson.') : 'Your week has room. Create a lesson or return to the demo week.';
+    $('clear-filters').textContent = filtered ? 'Clear filters' : isLive ? (latestDate ? 'Go to latest lesson' : 'Create a lesson') : 'Go to demo week';
+    const unlinked = Number(snapshot.meta?.unlinkedAttendanceCount) || 0;
+    $('attendance-link-note').hidden = !isLive || !unlinked;
+    $('attendance-link-note').textContent = `${unlinked} ALL_ATT ${unlinked === 1 ? 'row is' : 'rows are'} not linked to a lesson yet.`;
+  }
+
+  function latestLessonDate() {
+    if (snapshot.meta?.latestLessonDate) return snapshot.meta.latestLessonDate;
+    const latest = snapshot.lessons.reduce((current, lesson) => !current || lesson.start > current ? lesson.start : current, null);
+    return latest ? schoolToday(latest) : null;
   }
 
   function renderEvents() {
@@ -97,7 +151,7 @@ function start() {
   }
 
   function renderTeachers() {
-    $('teacher-list').innerHTML = snapshot.teachers.map(teacher => `<label class="teacher-filter" style="--teacher-color:${teacher.color}"><input type="checkbox" value="${teacher.id}" ${selectedTeachers.has(teacher.id) ? 'checked' : ''} aria-label="Show ${escape(teacher.name)}"><span class="teacher-avatar" aria-hidden="true">${escape(teacher.initials)}</span><span class="teacher-name">${escape(teacher.name)}</span></label>`).join('');
+    $('teacher-list').innerHTML = snapshot.teachers.map(teacher => `<label class="teacher-filter" style="--teacher-color:${escape(teacher.color || '#71717a')}"><input type="checkbox" value="${escape(teacher.id)}" ${selectedTeachers.has(teacher.id) ? 'checked' : ''} aria-label="Show ${escape(teacher.name)}"><span class="teacher-avatar" aria-hidden="true">${escape(teacher.initials || teacher.name.slice(0, 2))}</span><span class="teacher-name" title="${escape(teacher.name)}">${escape(teacher.name)}</span></label>`).join('');
   }
 
   function renderMini() {
@@ -187,8 +241,18 @@ function start() {
 
   function renderAttendance(lessonId) {
     const records = snapshot.attendance.filter(row => row.type === 'attendance' && row.lessonId === lessonId);
-    $('attendance-count').textContent = `${records.length} ${records.length === 1 ? 'student' : 'students'}`;
-    $('attendance-list').innerHTML = records.length ? records.map(row => `<div class="attendance-row"><span class="student-avatar" aria-hidden="true">${escape(row.studentName.split(' ').map(s => s[0]).slice(0, 2).join(''))}</span><div class="attendance-name">${escape(row.studentName)}${!row.studentId ? '<span class="attendance-note">Student link pending</span>' : ''}</div><span class="attendance-status" data-status="${escape(row.status)}">${row.status === 'pending' ? 'Not marked' : row.status === 'present' ? 'Present' : 'Absent'}</span></div>`).join('') : '<div class="empty-attendance">No student attendance entries yet. Saving this lesson creates its calendar record.</div>';
+    const distinctStudents = new Set(records.map(row => row.studentId).filter(Boolean)).size;
+    $('attendance-count').textContent = isLive
+      ? `${records.length} attendance ${records.length === 1 ? 'entry' : 'entries'}`
+      : `${records.length} ${records.length === 1 ? 'student' : 'students'}`;
+    $('attendance-count').title = `${distinctStudents} distinct linked ${distinctStudents === 1 ? 'student' : 'students'}. Multiple entries may share a source row or student.`;
+    const statuses = { pending: 'Not marked', present: 'Present', absent: 'Absent', recorded: 'Recorded in ALL_ATT', excused: 'Excused', late: 'Late' };
+    $('attendance-list').innerHTML = records.length ? records.map(row => {
+      const name = row.studentName || 'Student not linked';
+      const notes = typeof row.notes === 'string' ? row.notes : '';
+      const source = row.sourceRowId != null ? `<span class="attendance-source">ALL_ATT row ${escape(row.sourceRowId)}</span>` : '';
+      return `<div class="attendance-row"><span class="student-avatar" aria-hidden="true">${escape(name.split(' ').map(s => s[0]).slice(0, 2).join(''))}</span><div class="attendance-name">${escape(name)}${!row.studentId ? '<span class="attendance-note">Student link pending</span>' : ''}${source}${notes ? `<span class="attendance-note">${escape(notes)}</span>` : ''}</div><span class="attendance-status" data-status="${escape(row.status)}">${escape(statuses[row.status] || 'Not marked')}</span></div>`;
+    }).join('') : `<div class="empty-attendance">${isLive ? 'No linked attendance records in ALL_ATT. Saving this lesson does not create or mark student attendance.' : 'No student attendance entries yet. Saving this lesson creates its calendar record.'}</div>`;
   }
 
   function openEditor(lessonId, range = {}) {
@@ -197,22 +261,22 @@ function start() {
     const day = range.date || focusedDate;
     const startTime = range.start || fromSchoolInput(`${day}T09:00`);
     const lesson = existing || {
-      title: '', teacherId: [...selectedTeachers][0] || snapshot.teachers[0].id,
+      title: '', teacherId: [...selectedTeachers][0] || snapshot.teachers[0]?.id || 'unassigned',
       group: '', start: startTime, end: range.end || new Date(new Date(startTime).getTime() + 3600000).toISOString(),
       room: '', participantText: '', checklist: '', status: 'scheduled', notes: '',
     };
     editorOpener = document.activeElement;
     $('editor-heading').textContent = existing ? 'Lesson details' : 'Create a lesson';
     $('editor-eyebrow').textContent = existing ? 'SCHOOL CALENDAR' : 'NEW LESSON';
-    $('editor-version').textContent = existing ? 'Changes stay in this demo' : 'One lesson · one calendar event';
-    $('lesson-teacher').innerHTML = snapshot.teachers.map(t => `<option value="${t.id}">${escape(t.name)}</option>`).join('');
+    $('editor-version').textContent = isLive ? 'Saves to Grist' : existing ? 'Changes stay in this demo' : 'One lesson · one calendar event';
+    $('lesson-teacher').innerHTML = snapshot.teachers.map(t => `<option value="${escape(t.id)}">${escape(t.name)}</option>`).join('');
     for (const input of $('lesson-form').querySelectorAll('[name]')) {
       input.value = ['start', 'end'].includes(input.name) ? schoolInput(lesson[input.name]) : lesson[input.name] || '';
     }
     $('form-error').hidden = true;
     $('draft-notice').hidden = true;
     renderAttendance(existing?.id);
-    editor = { id: existing?.id, version: existing?.version, initial: JSON.stringify(rawDraft()) };
+    editor = { id: existing?.id, clientId: crypto.randomUUID(), version: existing?.version, initial: JSON.stringify(rawDraft()) };
     closeMobileSidebar();
     $('lesson-dialog').showModal();
     $('lesson-title').focus();
@@ -220,11 +284,11 @@ function start() {
 
   async function saveEditor(event) {
     event.preventDefault();
-    if (!editor || busy) return;
+    if (!editor || busy || refreshing) return;
     let submitted;
     try {
       const raw = rawDraft();
-      submitted = { ...raw, type: 'lesson', ...(editor.id ? { id: editor.id } : {}), start: fromSchoolInput(raw.start), end: fromSchoolInput(raw.end) };
+      submitted = { ...raw, type: 'lesson', ...(editor.id ? { id: editor.id } : isLive ? { clientId: editor.clientId } : {}), start: fromSchoolInput(raw.start), end: fromSchoolInput(raw.end) };
       if (!$('lesson-form').reportValidity()) return;
     } catch (error) {
       $('form-error').textContent = error.message;
@@ -240,10 +304,10 @@ function start() {
       const saved = await store.saveLesson(submitted, { expectedVersion: currentEditor.version });
       closeEditor();
       const hiddenByTeacher = !selectedTeachers.has(saved.teacherId);
-      notify(`${currentEditor.id ? 'Lesson updated' : 'Lesson created'}${hiddenByTeacher ? '. Its teacher is currently hidden.' : '. Saved in this demo.'}`);
+      notify(`${currentEditor.id ? 'Lesson updated' : 'Lesson created'}. ${isLive ? 'Saved to Grist.' : 'Saved in this demo.'}${hiddenByTeacher ? ' Its teacher is currently hidden.' : ''}${saved.refreshWarning ? ' Other calendar data could not refresh; use Refresh data when connected.' : ''}`);
     } catch (error) {
       if (editor === currentEditor) {
-        $('form-error').textContent = error.message;
+        $('form-error').textContent = `${error.message}${error.outcomeUnknown ? ' Keep this draft and retry unchanged to safely confirm the save.' : ''}`;
         $('form-error').hidden = false;
       }
       notify(error.message, 'error');
@@ -254,25 +318,32 @@ function start() {
   }
 
   async function saveCalendarChange(info, action) {
-    if (busy) { info.revert(); return; }
+    if (busy || refreshing) { info.revert(); return; }
     const original = snapshot.lessons.find(l => l.id === info.event.id);
     if (!original) { info.revert(); return; }
     setBusy(true);
     armFailure();
     try {
-      await store.saveLesson({ id: original.id, start: info.event.start.toISOString(), end: info.event.end.toISOString() }, { expectedVersion: original.version });
-      notify(`Lesson ${action}. Student attendance stayed linked.`);
+      const saved = await store.saveLesson({ id: original.id, start: info.event.start.toISOString(), end: info.event.end.toISOString() }, { expectedVersion: original.version });
+      notify(`Lesson ${action}${isLive ? ' in Grist' : ''}. Student attendance stayed linked.${saved.refreshWarning ? ' Other calendar data could not refresh; use Refresh data when connected.' : ''}`);
     } catch (error) {
       info.revert();
       renderEvents();
-      notify(`${error.message} The original time has been restored.`, 'error');
+      if (isLive && error.outcomeUnknown) {
+        try {
+          await store.refresh();
+          notify('The save response was interrupted. The calendar now shows the latest Grist data; check the lesson time before editing again.', 'error');
+        } catch {
+          notify('The save could not be confirmed and Grist could not refresh. The displayed time is the last known value; refresh to verify before editing again.', 'error');
+        }
+      } else notify(`${error.message}${isLive ? ' Refresh to check the latest Grist data.' : ' The original time has been restored.'}`, 'error');
     } finally { setBusy(false); }
   }
 
   calendar = new FullCalendar.Calendar($('calendar'), {
     initialView: mobile.matches ? 'timeGridDay' : 'timeGridWeek',
-    initialDate: anchorDate,
-    now: requestedDate ? fromSchoolInput(`${anchorDate}T12:00`) : undefined,
+    initialDate: focusedDate,
+    now: requestedDate && !isLive ? fromSchoolInput(`${anchorDate}T12:00`) : undefined,
     timeZone: SCHOOL_TIME_ZONE,
     locale: 'en-gb', firstDay: 1,
     headerToolbar: false, height: '100%',
@@ -281,9 +352,10 @@ function start() {
     slotLabelFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
     eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
     editable: true, selectable: true, selectMirror: true, selectMinDistance: 4,
-    eventAllow: () => !busy,
-    selectAllow: () => !busy,
+    eventAllow: () => !busy && !refreshing,
+    selectAllow: () => !busy && !refreshing,
     eventMinHeight: 30, eventShortHeight: 42, dayMaxEvents: 3, nowIndicator: true,
+    slotEventOverlap: false,
     eventResizableFromStart: false, eventDisplay: 'block',
     longPressDelay: 350, eventLongPressDelay: 350, selectLongPressDelay: 350,
     handleWindowResize: true,
@@ -347,8 +419,12 @@ function start() {
     noEventsContent: 'No lessons in this period. Create one or choose another date.',
   });
 
-  store.subscribe(next => {
+  function acceptSnapshot(next) {
+    const previousTeacherIds = new Set(snapshot.teachers.map(teacher => teacher.id));
+    const allTeachersWereSelected = previousTeacherIds.size === selectedTeachers.size && [...previousTeacherIds].every(id => selectedTeachers.has(id));
     snapshot = next;
+    selectedTeachers = new Set(snapshot.teachers.filter(teacher => allTeachersWereSelected || selectedTeachers.has(teacher.id)).map(teacher => teacher.id));
+    renderTeachers();
     if (editor?.id && !editorSaving) {
       const current = snapshot.lessons.find(l => l.id === editor.id);
       renderAttendance(editor.id);
@@ -358,11 +434,16 @@ function start() {
       }
     }
     renderEvents();
-  });
+  }
+  store.subscribe(acceptSnapshot);
 
   $('brand-day').textContent = Number(anchorDate.slice(8));
   renderTeachers();
   calendar.render();
+  $('connection-state').hidden = true;
+  $('calendar-region').setAttribute('aria-busy', 'false');
+  document.querySelector('.app-header').inert = false;
+  $('save-state-text').textContent = readyText;
   syncSidebar();
   $('teacher-list').addEventListener('change', event => {
     const checkbox = event.target.closest('input');
@@ -387,8 +468,16 @@ function start() {
   $('create-button').addEventListener('click', () => openEditor());
   $('search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(renderEvents, 100); });
   $('clear-filters').addEventListener('click', () => {
+    const filtered = selectedTeachers.size !== snapshot.teachers.length || $('search').value.trim();
     $('search').value = ''; selectedTeachers = new Set(snapshot.teachers.map(t => t.id));
-    renderTeachers(); calendar.gotoDate(anchorDate); renderEvents();
+    renderTeachers();
+    if (!isLive) calendar.gotoDate(anchorDate);
+    else if (!filtered) {
+      const latest = latestLessonDate();
+      if (latest) calendar.gotoDate(latest);
+      else openEditor();
+    }
+    renderEvents();
   });
   $('sidebar-toggle').addEventListener('click', () => {
     if (mobile.matches) {
@@ -410,19 +499,46 @@ function start() {
   $('cancel-editor').addEventListener('click', requestCloseEditor);
   $('lesson-dialog').addEventListener('cancel', event => { event.preventDefault(); void requestCloseEditor(); });
   async function refreshData() {
-    snapshot = await store.refresh(); renderEvents();
-    if (editor) {
-      renderAttendance(editor.id);
-      const current = snapshot.lessons.find(l => l.id === editor.id);
-      const changed = editor.id && (!current || current.version !== editor.version);
-      $('draft-notice').textContent = changed ? 'Saved data changed. Your draft has been kept; reopen the lesson before saving again.' : 'Data refreshed. Your lesson draft has been kept.';
-      $('draft-notice').hidden = false;
+    if (busy || refreshing) return;
+    refreshing = true;
+    $('refresh-button').disabled = true;
+    $('refresh-editor').disabled = true;
+    $('save-lesson').disabled = true;
+    $('save-state-text').textContent = 'Refreshing…';
+    $('save-state').classList.add('is-saving');
+    delete $('save-state').dataset.state;
+    try {
+      const next = await store.refresh();
+      if (!isLive) acceptSnapshot(next);
+      if (editor) {
+        renderAttendance(editor.id);
+        const current = snapshot.lessons.find(l => l.id === editor.id);
+        const changed = editor.id && (!current || current.version !== editor.version);
+        $('draft-notice').textContent = changed ? 'Saved data changed. Your draft has been kept; reopen the lesson before saving again.' : 'Data refreshed. Your lesson draft has been kept.';
+        $('draft-notice').hidden = false;
+      }
+      $('save-state-text').textContent = readyText;
+      notify(editor ? 'Data refreshed. Your lesson draft has been kept.' : isLive ? 'Latest Grist data loaded.' : 'Demo data refreshed.');
+    } catch (error) {
+      $('save-state-text').textContent = 'Refresh failed';
+      $('save-state').dataset.state = 'error';
+      if (editor) {
+        $('draft-notice').textContent = 'Refresh failed. Your lesson draft has been kept; try refreshing again when connected.';
+        $('draft-notice').hidden = false;
+      }
+      notify(error.message, 'error');
+    } finally {
+      refreshing = false;
+      $('refresh-button').disabled = busy;
+      $('refresh-editor').disabled = busy;
+      $('save-lesson').disabled = busy;
+      $('save-state').classList.remove('is-saving');
     }
-    notify(editor ? 'Data refreshed. Your lesson draft has been kept.' : 'Demo data refreshed.');
   }
   $('refresh-button').addEventListener('click', refreshData);
   $('refresh-editor').addEventListener('click', refreshData);
   $('reset-button').addEventListener('click', async () => {
+    if (isLive || busy) return;
     if (!await confirmAction('Reset the demo?', 'Restore all sample lessons and discard changes made in this tab.', 'Reset demo')) return;
     store.reset();
     if (editor) closeEditor();
@@ -450,4 +566,4 @@ function start() {
   });
 }
 
-document.addEventListener('DOMContentLoaded', start, { once: true });
+document.addEventListener('DOMContentLoaded', () => { start().catch(showStartupFailure); }, { once: true });

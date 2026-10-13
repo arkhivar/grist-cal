@@ -13,6 +13,6 @@ function run(args) {
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status || 1);
 }
-for (const filename of [...await filesIn('src', ['.js']), ...await filesIn('scripts', ['.mjs'])]) run(['--check', filename]);
+for (const filename of [...await filesIn('src', ['.js']), ...await filesIn('scripts', ['.mjs']), ...await filesIn('server', ['.mjs'])]) run(['--check', filename]);
 run(['scripts/verify-vendor.mjs']);
 run(['--test', ...await filesIn('tests', ['.test.js'])]);

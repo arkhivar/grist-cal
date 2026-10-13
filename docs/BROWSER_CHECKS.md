@@ -28,4 +28,28 @@ These are recorded interactive checks, not an automated browser test suite. Use 
 
 The range-selection check exposed a temporary-preview event without teacher metadata. The renderer now handles that preview, and the full select → save → change-view flow passed again. A separate focus review corrected restoration to hidden/inert sidebar controls. No additional console errors were observed in the subsequent checks.
 
-Not established by these checks: physical touch/long-press behavior, Safari/Firefox compatibility, actual Grist persistence or access rules, browser timezone emulation, recurring series, or production-volume performance. The demo uses synthetic records and makes no Grist requests.
+The demo uses synthetic records and makes no Grist requests. The following integration checks separately establish live persistence.
+
+## Live Grist sandbox
+
+Verified on 2026-10-13 against the configured local server at `http://127.0.0.1:4174`, with desktop and 390 × 844 phone viewports. Only two isolated, newly created lessons were used for write checks; both were removed afterward after validating their identities and absence of attendance links. No real school records or screenshots are committed here.
+
+| Check | Observed result |
+| --- | --- |
+| Live loading | Loading indicator resolves to Connected to Grist; demo reset/failure tools are hidden. |
+| Imported grouping | One group event opens five separate attendance entries from ALL_ATT, with source row references and notes. |
+| Attendance meaning | Entries say Recorded in ALL_ATT; no present/absent status is inferred from notes or money. |
+| Edit persistence | Room and manual checklist changes survive reload and match direct Grist readback. |
+| Concurrent edit | A second writer changes the test lesson after the editor opens; the older browser save is rejected, its draft remains, and the newer value is preserved. |
+| New lesson | Create produces exactly one Calendar_Lessons row with a stable UUID and no attendance rows. |
+| Pointer move | Actual drag moves the new lesson to the following day; Grist stores the matching UTC instant for 09:00 school time. |
+| Pointer resize | Actual bottom-edge drag changes duration from 60 to 90 minutes; direct Grist readback confirms it. |
+| Cancellation | Cancelled status persists through reload. |
+| Phone layout | Day view opens by default; the editor scrolls and keeps Save/Cancel visible at 390px width. |
+| Concurrent lesson layout | Real overlapping lessons exposed text showing through an adjacent card. Side-by-side placement and contained wrapping now keep their titles separate. |
+| Final view | Go to latest lesson opens the imported week; the live browser reports no console warnings or errors. |
+| Import and data integrity | 2,731 imported lessons link 3,206 attendance rows; five undated rows stay unlinked. Rerun plans no new lessons or links. All 3,211 original rows retain the ten checked existing input fields, including financial and attendance values. |
+
+The automated suite additionally covers failed writes, unknown outcomes, idempotent retries, concurrent reference changes, interrupted imports, and preservation of attendance when scheduling changes.
+
+Not established by these checks: physical touch/long-press behavior, Safari/Firefox compatibility, browser timezone emulation, recurring series, or teacher-specific access rules. The local development service account is not a production authorization model.

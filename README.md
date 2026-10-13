@@ -1,6 +1,6 @@
 # grist-cal
 
-A standalone school calendar, backed by Grist in a later milestone. The calendar opens in its own browser tab and takes its layout and interaction cues from Google Calendar, with the visual language of [arkhivar/grist](https://github.com/arkhivar/grist).
+A standalone school calendar with Grist persistence and a fictional-data demo. It opens in its own browser tab and takes its layout and interaction cues from Google Calendar, with the visual language of [arkhivar/grist](https://github.com/arkhivar/grist).
 
 ## Run locally
 
@@ -18,26 +18,34 @@ Run the automated checks from the repository root:
 node scripts/check.mjs
 ```
 
-This checks JavaScript syntax, bundled asset hashes and the domain, adapter and local-server test suites. See [current state](docs/STATE.md) for verification results, including browser interaction checks.
+This checks JavaScript syntax, bundled asset hashes, and the domain, adapter, import and local-server test suites. See [current state](docs/STATE.md) for verification results.
 
-## Current milestone
+## Connect a Grist sandbox
 
-Milestone 1 is a local, in-memory demo with fictional lessons and attendance records. Work is on `codex/standalone-calendar-demo`.
+Follow [Grist setup and import](docs/GRIST.md) to supply server-only credentials, add the calendar schema and explicitly import attendance. Normal server startup reads existing data; it never creates schema or imports attendance.
+
+The setup command supports a preview of the import plan and a separate `--import-attendance` flag. It preserves existing columns, creates one record per lesson in `Calendar_Lessons`, and links the original `ALL_ATT` attendance rows. The import is safe to rerun after partial completion.
+
+Without Grist configuration, the command above starts the demo. With configuration, it starts the connected calendar. The browser shows which mode is active. A connected server may use port 4174 alongside the demo on 4173.
+
+## What works
 
 - Day, week, month and agenda views, a mini-calendar, teacher filters and lesson/group/student search.
-- Create and edit lessons; drag to move them and resize to change their duration. The lesson editor also provides keyboard-accessible time fields and a Cancelled status.
-- Read-only fictional attendance linked to each lesson. Moving or cancelling a lesson preserves those records; scheduling never marks a student present.
-- **Reset demo** restores the sample schedule. Under **Demo tools**, **Fail the next save** tests a failed edit, move or resize; **Refresh data** preserves an open lesson draft. The editor also has a refresh control.
+- Create and edit lessons; drag to move them and resize to change their duration. In connected mode these changes and cancellation persist in Grist. The editor also provides keyboard-accessible time fields.
+- Read-only attendance linked to each lesson. Connected records are labelled **Recorded in ALL_ATT**; the app does not infer presence or absence from notes or financial fields. Scheduling preserves attendance links and does not change original attendance dates or financial inputs.
+- Manual checklist text, teacher combinations and Unassigned lessons. Conflicting and uncertain saves keep the draft; uncertain saves offer a safe retry.
+- **Refresh data** preserves an open lesson draft. In demo mode, **Reset demo** restores the sample schedule and **Fail the next save** tests failure recovery.
 
 The school timezone is **Asia/Vladivostok**, regardless of the browser's timezone. One scheduled lesson creates one calendar event; each student's attendance remains a separate record linked to that lesson.
 
-Changes last only in the current tab's memory and are lost when the page reloads. Real Grist access, recurrence, sign-in and deployment are later milestones.
+Demo changes last only in the current tab's memory. Connected changes remain after reload. Deletion, recurring series, teacher sign-in, production permissions and deployment remain future work; the current server is a local development connection using a service account.
 
 ## Project notes
 
 - [Plan and accepted decisions](docs/PLAN.md)
 - [First implementation task](docs/FIRST_TASK.md)
 - [Actual state and verification](docs/STATE.md)
+- [Grist configuration, import and data model](docs/GRIST.md)
 - [Reference sources](docs/SOURCES.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md) and [pinned asset manifest](vendor/manifest.json)
 - [Contributor guidance](AGENTS.md)

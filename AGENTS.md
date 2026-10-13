@@ -3,10 +3,12 @@
 ## Product and scope
 
 - Build a standalone full-window calendar first. Google Calendar guides layout and interaction; `arkhivar/grist` supplies visual tokens, typography and suitable control patterns.
-- Current milestone: local synthetic-data demo. Keep the data adapter independent of the calendar UI. Grist connection, recurrence, Authentik, NetBird and Puppet deployment are later work.
-- Display and edit lesson times in `Asia/Vladivostok`; store instants as explicit UTC ISO strings in the demo and adapt Grist epoch seconds at the future boundary. Never use the browser's local timezone implicitly.
+- Current milestone: local read/write Grist sandbox integration, explicitly authorized by the user. Keep the synthetic demo available and the data adapter independent of the calendar UI. Recurrence, Authentik, NetBird and Puppet deployment remain later work.
+- Display and edit lesson times in `Asia/Vladivostok`; use explicit UTC ISO strings in the app and epoch seconds at the Grist boundary. Never use the browser's local timezone implicitly.
 - Give lessons an explicit type and stable identity. Student-attendance rows, including incomplete rows with an empty student reference, must never become events.
 - Attendance is per student, linked by lesson ID. Scheduling does not mark attendance. Cancellation preserves records. Manual checklist fractions remain manual.
+- Confirmed import mapping: exact ALL_ATT.datetime + sorted per teacher references + group2 group references define a lesson. For indie/trial groups and records without a group, also include student references. Imported lessons initially last 60 minutes. Preserve missing/multiple teacher references; do not infer present/absent from payment values or notes.
+- Calendar_Lessons owns scheduled times. ALL_ATT.Calendar_Lesson links historical attendance. Lesson moves never silently rewrite legacy attendance dates, wages, payments or formulas.
 
 ## Data and authorization
 
