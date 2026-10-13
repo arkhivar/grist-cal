@@ -1,0 +1,76 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { SCHOOL_TIME_ZONE, schoolToday, schoolInput, fromSchoolInput,
+  formatSchoolTime, shiftDate, startOfWeek, selectCalendarLessons } from '../src/domain.js';
+import { createDemoData } from '../src/demo-data.js';
+
+test('school time crosses midnight correctly and round-trips with offsets', () => {
+  assert.equal(SCHOOL_TIME_ZONE, 'Asia/Vladivostok');
+  assert.equal(schoolToday(new Date('2026-10-12T14:01:00Z')), '2026-10-13');
+  assert.equal(schoolInput('2026-10-12T14:01:00Z'), '2026-10-13T00:01');
+  assert.equal(schoolInput('2026-10-12T09:01:00-05:00'), '2026-10-13T00:01');
+  assert.equal(fromSchoolInput('2026-10-13T00:01'), '2026-10-12T14:01:00.000Z');
+  assert.equal(formatSchoolTime('2026-10-13T09:15:00+10:00'), '09:15');
+});
+
+test('date navigation is Monday-based and survives leap/month/year boundaries', () => {
+  assert.equal(startOfWeek('2026-10-18'), '2026-10-12');
+  assert.equal(startOfWeek('2026-10-12'), '2026-10-12');
+  assert.equal(shiftDate('2024-02-28', 1), '2024-02-29');
+  assert.equal(shiftDate('2026-01-01', -1), '2025-12-31');
+  assert.equal(shiftDate('2026-10-31', 1), '2026-11-01');
+});
+
+test('invalid dates, times, and timezone-less instants are rejected', () => {
+  for (const input of ['2026-02-29T12:00', '2026-04-31T12:00', '2026-13-01T12:00',
+    '2026-10-13T24:00', '2026-10-13T12:60', 'garbage', '0000-01-01T00:00']) {
+    assert.throws(() => fromSchoolInput(input), { code: 'VALIDATION_ERROR' });
+  }
+  assert.throws(() => schoolInput('2026-02-30T12:00:00Z'), { code: 'VALIDATION_ERROR' });
+  assert.throws(() => schoolInput('2026-10-13T12:00'), { code: 'VALIDATION_ERROR' });
+  assert.throws(() => shiftDate('2026-02-30', 1), { code: 'VALIDATION_ERROR' });
+  assert.throws(() => shiftDate('2026-10-13', 1.5), { code: 'VALIDATION_ERROR' });
+});
+
+test('school date calculations are identical under different process timezones', () => {
+  const moduleUrl = new URL('../src/domain.js', import.meta.url).href;
+  const script = `import {schoolToday, schoolInput, fromSchoolInput, startOfWeek} from ${JSON.stringify(moduleUrl)};
+    console.log(JSON.stringify([schoolToday(new Date('2026-10-12T14:01:00Z')),
+      schoolInput('2026-10-12T14:01:00Z'), fromSchoolInput('2026-10-13T09:00'), startOfWeek('2026-10-18')]));`;
+  const results = ['UTC', 'America/Los_Angeles', 'Asia/Tokyo'].map((TZ) =>
+    execFileSync(process.execPath, ['--input-type=module', '-e', script],
+      { encoding: 'utf8', env: { ...process.env, TZ } }).trim());
+  assert.equal(new Set(results).size, 1);
+  assert.deepEqual(JSON.parse(results[0]), ['2026-10-13', '2026-10-13T00:01', '2026-10-12T23:00:00.000Z', '2026-10-12']);
+});
+
+test('fixtures anchor to the school week, keep stable IDs, and use only explicit lessons as events', () => {
+  const first = createDemoData('2026-10-13');
+  const second = createDemoData('2026-10-20');
+  assert.equal(first.lessons.length, 18);
+  assert.equal(first.teachers.length, 4);
+  assert.deepEqual(first.lessons.map(({ id }) => id), second.lessons.map(({ id }) => id));
+  assert.equal(schoolInput(first.lessons[0].start), '2026-10-12T09:00');
+  assert.equal(schoolInput(second.lessons[0].start), '2026-10-19T09:00');
+  assert.ok(first.attendance.some(({ studentId }) => !studentId));
+  for (const lesson of first.lessons) {
+    const records = first.attendance.filter(({ lessonId }) => lessonId === lesson.id);
+    assert.ok(records.length >= 3 && records.length <= 6);
+    assert.ok(records.every(({ type }) => type === 'attendance'));
+  }
+  const contaminated = { ...first, lessons: [...first.lessons, ...first.attendance, { id: 'unknown', studentId: '' }] };
+  assert.equal(selectCalendarLessons(contaminated).length, first.lessons.length);
+});
+
+test('filters combine teachers and search without deriving event identity from attendance', () => {
+  const data = createDemoData('2026-10-13');
+  const anna = selectCalendarLessons(data, { teacherIds: ['anna'] });
+  assert.ok(anna.length > 0 && anna.every(({ teacherId }) => teacherId === 'anna'));
+  assert.equal(selectCalendarLessons(data, { teacherIds: [] }).length, 0);
+  assert.deepEqual(selectCalendarLessons(data, { search: 'ANNA PETROVA' }), anna);
+  const attendance = data.attendance.find(({ studentId }) => !studentId);
+  assert.ok(selectCalendarLessons(data, { search: attendance.studentName }).some(({ id }) => id === attendance.lessonId));
+  assert.equal(selectCalendarLessons(data, { teacherIds: ['mikhail'], search: 'Conversation' }).length, 0);
+  assert.ok(selectCalendarLessons(data, { search: '0/4' }).length > 0);
+});

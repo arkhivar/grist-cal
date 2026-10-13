@@ -1,0 +1,14 @@
+{
+  "name": "grist-cal",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone school calendar demo with explicit lesson and attendance identities",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "test": "node --test tests/*.test.js",
+    "check:vendor": "node scripts/verify-vendor.mjs",
+    "check": "node scripts/check.mjs"
+  }
+}

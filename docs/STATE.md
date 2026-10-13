@@ -12,7 +12,13 @@ Updated: 2026-10-13 (Asia/Vladivostok).
 
 ## Implementation
 
-Milestone 1 is being implemented. No usable calendar or browser checks are claimed by this foundation commit. Run commands and actual test results will be added with the working demo.
+The domain model, synthetic records and in-memory adapter are implemented. They provide explicit lesson/attendance identities, school-timezone conversion, delayed writes, version conflicts, one-shot failure simulation and a reset barrier.
+
+FullCalendar Standard 6.1.21, its Luxon plugin, Luxon 3.7.2 and IBM Plex fonts are vendored with exact sources, licenses and hashes. `node scripts/verify-vendor.mjs` verifies all 19 bundled files.
+
+`node --test tests/domain.test.js tests/memory-store.test.js` passes 17 tests, including timezone checks in UTC, America/Los_Angeles and Asia/Tokyo child processes. These are domain tests, not browser geometry tests.
+
+The interface is being implemented; no browser interaction results are claimed yet. Local run commands and browser findings will be added with the working demo.
 
 ## Next
 

@@ -1,0 +1,242 @@
+{
+  "schemaVersion": 1,
+  "description": "Pinned browser assets; no runtime CDN dependencies. Verify with node scripts/verify-vendor.mjs. Preserve exact bytes with the vendor/** -text Git attribute.",
+  "referenceDesign": {
+    "license": "MIT",
+    "files": [
+      "shared/base.css",
+      "shared/dates.js"
+    ],
+    "repository": "https://github.com/arkhivar/grist",
+    "revision": "9bda49cdcfd4a23ff2c5c120cf4378737ded9f2e"
+  },
+  "packages": [
+    {
+      "bundledDependency": {
+        "name": "preact",
+        "license": "MIT",
+        "evidence": "https://registry.npmjs.org/@fullcalendar/core/6.1.21",
+        "declaredRange": "~10.12.1"
+      },
+      "includes": [
+        "@fullcalendar/core",
+        "@fullcalendar/interaction",
+        "@fullcalendar/daygrid",
+        "@fullcalendar/timegrid",
+        "@fullcalendar/list",
+        "@fullcalendar/multimonth"
+      ],
+      "version": "6.1.21",
+      "tarball": "https://registry.npmjs.org/fullcalendar/-/fullcalendar-6.1.21.tgz",
+      "registry": "https://registry.npmjs.org/fullcalendar/6.1.21",
+      "integrity": "sha512-yGZhflQmfCJKmmOlwJcQ0MPNAYABieaiJp9AaRgHBMRIUxNA+VFa6mkIbVNpjdSZIy9AY2HwteTt58tJ+3ktuQ==",
+      "license": "MIT",
+      "name": "fullcalendar"
+    },
+    {
+      "name": "@fullcalendar/luxon3",
+      "registry": "https://registry.npmjs.org/@fullcalendar/luxon3/6.1.21",
+      "version": "6.1.21",
+      "integrity": "sha512-jlRhmxyut94fH7RbdsAexkmR9eJsVeavjVTk94M8GKPiAgEf2q3urFe4rFI5+ThwSTkOX8MPcfFIg8+uvKKZCQ==",
+      "license": "MIT",
+      "tarball": "https://registry.npmjs.org/@fullcalendar/luxon3/-/luxon3-6.1.21.tgz"
+    },
+    {
+      "name": "luxon",
+      "registry": "https://registry.npmjs.org/luxon/3.7.2",
+      "version": "3.7.2",
+      "integrity": "sha512-vtEhXh/gNjI9Yg1u4jX/0YVPMvxzHuGgCm6tC5kZyb08yjGWGnqAjGJvcXbqQR2P3MyMEFnRbpcdFS6PBcLqew==",
+      "license": "MIT",
+      "tarball": "https://registry.npmjs.org/luxon/-/luxon-3.7.2.tgz"
+    },
+    {
+      "name": "@fontsource/ibm-plex-sans",
+      "license": "OFL-1.1",
+      "registry": "https://registry.npmjs.org/@fontsource/ibm-plex-sans/5.3.0",
+      "version": "5.3.0"
+    },
+    {
+      "name": "@fontsource/ibm-plex-mono",
+      "license": "OFL-1.1",
+      "registry": "https://registry.npmjs.org/@fontsource/ibm-plex-mono/5.3.0",
+      "version": "5.3.0"
+    }
+  ],
+  "assets": [
+    {
+      "path": "vendor/fonts/fonts.css",
+      "source": "locally adapted @font-face declarations using the pinned Fontsource CSS unicode ranges",
+      "sha256": "95fdf89f9aede952141e1761ede50da88ca52d4e2b55d391f5dfd60315903ea6",
+      "bytes": 2579,
+      "license": "OFL-1.1",
+      "upstreamSources": [
+        "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/400.css",
+        "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/500.css",
+        "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/600.css",
+        "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/400.css"
+      ]
+    },
+    {
+      "path": "vendor/fonts/ibm-plex-mono-cyrillic-400-normal.woff2",
+      "source": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/files/ibm-plex-mono-cyrillic-400-normal.woff2",
+      "sha256": "7635422bd10ddbbcb0e0caa1154b928298f5c8319b8c00b30978d4395f4783ce",
+      "bytes": 8356,
+      "license": "OFL-1.1",
+      "package": "@fontsource/ibm-plex-mono",
+      "version": "5.3.0"
+    },
+    {
+      "path": "vendor/fonts/ibm-plex-mono-latin-400-normal.woff2",
+      "source": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/files/ibm-plex-mono-latin-400-normal.woff2",
+      "sha256": "08949f728dc52d528e69b1667d15c89a5686a4ee9a296ff90983985f99c380f7",
+      "bytes": 14708,
+      "license": "OFL-1.1",
+      "package": "@fontsource/ibm-plex-mono",
+      "version": "5.3.0"
+    },
+    {
+      "path": "vendor/fonts/ibm-plex-sans-cyrillic-400-normal.woff2",
+      "source": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/files/ibm-plex-sans-cyrillic-400-normal.woff2",
+      "sha256": "69afad88a0740b6e5647f1104c9176a261f1ad9d60202f605456a983799752e9",
+      "bytes": 14800,
+      "license": "OFL-1.1",
+      "package": "@fontsource/ibm-plex-sans",
+      "version": "5.3.0"
+    },
+    {
+      "path": "vendor/fonts/ibm-plex-sans-cyrillic-500-normal.woff2",
+      "source": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/files/ibm-plex-sans-cyrillic-500-normal.woff2",
+      "sha256": "200be3a2a6b1789fb8824a4a74c7cccb7137e83fde6200ea78d8829f99d43546",
+      "bytes": 15000,
+      "license": "OFL-1.1",
+      "package": "@fontsource/ibm-plex-sans",
+      "version": "5.3.0"
+    },
+    {
+      "path": "vendor/fonts/ibm-plex-sans-cyrillic-600-normal.woff2",
+      "source": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/files/ibm-plex-sans-cyrillic-600-normal.woff2",
+      "sha256": "730becc6f005c18c31440f14d34677f2704a85e6afffd4bee6a64d5c95f45a55",
+      "bytes": 15040,
+      "license": "OFL-1.1",
+      "package": "@fontsource/ibm-plex-sans",
+      "version": "5.3.0"
+    },
+    {
+      "path": "vendor/fonts/ibm-plex-sans-latin-400-normal.woff2",
+      "source": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/files/ibm-plex-sans-latin-400-normal.woff2",
+      "sha256": "3b646991d30055a93a4ecc499713d4347953a74a947ecab435ab72070cbdab0e",
+      "bytes": 22588,
+      "license": "OFL-1.1",
+      "package": "@fontsource/ibm-plex-sans",
+      "version": "5.3.0"
+    },
+    {
+      "path": "vendor/fonts/ibm-plex-sans-latin-500-normal.woff2",
+      "source": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/files/ibm-plex-sans-latin-500-normal.woff2",
+      "sha256": "0717336fb31fcdcde4b8deb3675bb4a0f7f6d484864afcd6751ac29975962203",
+      "bytes": 24184,
+      "license": "OFL-1.1",
+      "package": "@fontsource/ibm-plex-sans",
+      "version": "5.3.0"
+    },
+    {
+      "path": "vendor/fonts/ibm-plex-sans-latin-600-normal.woff2",
+      "source": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/files/ibm-plex-sans-latin-600-normal.woff2",
+      "sha256": "8960851d691c054ed38e259bdcf1a6190d157b4203ed5bb32c632a863fb8ec2f",
+      "bytes": 24252,
+      "license": "OFL-1.1",
+      "package": "@fontsource/ibm-plex-sans",
+      "version": "5.3.0"
+    },
+    {
+      "path": "vendor/fullcalendar-6.1.21/index.global.min.js",
+      "source": "https://cdn.jsdelivr.net/npm/fullcalendar@6.1.21/index.global.min.js",
+      "sha256": "4e72ff169af857bbb8fee626364949d570424b00df36c01bd087a9580371515e",
+      "bytes": 283987,
+      "license": "MIT",
+      "package": "fullcalendar",
+      "version": "6.1.21"
+    },
+    {
+      "path": "vendor/fullcalendar-luxon3-6.1.21/index.global.min.js",
+      "source": "https://cdn.jsdelivr.net/npm/@fullcalendar/luxon3@6.1.21/index.global.min.js",
+      "sha256": "89a8f33b1191438d992d77a7cc19ca98fa23b84fbaf0501f891b19311b0d8b51",
+      "bytes": 1902,
+      "license": "MIT",
+      "package": "@fullcalendar/luxon3",
+      "version": "6.1.21"
+    },
+    {
+      "path": "vendor/licenses/arkhivar-grist-MIT.txt",
+      "source": "https://raw.githubusercontent.com/arkhivar/grist/9bda49cdcfd4a23ff2c5c120cf4378737ded9f2e/LICENSE",
+      "sha256": "17998d1b97918106f01d422ac256b5eee52a4de084340a24475cc2dac322ee79",
+      "bytes": 1065,
+      "license": "MIT",
+      "package": "arkhivar/grist",
+      "version": "9bda49cdcfd4a23ff2c5c120cf4378737ded9f2e"
+    },
+    {
+      "path": "vendor/licenses/fullcalendar-luxon3-MIT.txt",
+      "source": "https://cdn.jsdelivr.net/npm/@fullcalendar/luxon3@6.1.21/LICENSE.md",
+      "sha256": "4c0b0dae26c99e3b11be70b990a703be4deb75e21884104582e0e217786d3209",
+      "bytes": 1066,
+      "license": "MIT",
+      "package": "@fullcalendar/luxon3",
+      "version": "6.1.21"
+    },
+    {
+      "path": "vendor/licenses/fullcalendar-MIT.txt",
+      "source": "https://cdn.jsdelivr.net/npm/fullcalendar@6.1.21/LICENSE.md",
+      "sha256": "4c0b0dae26c99e3b11be70b990a703be4deb75e21884104582e0e217786d3209",
+      "bytes": 1066,
+      "license": "MIT",
+      "package": "fullcalendar",
+      "version": "6.1.21"
+    },
+    {
+      "path": "vendor/licenses/ibm-plex-mono-OFL.txt",
+      "source": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/LICENSE",
+      "sha256": "23b0a9d0c6d3f140a0b77e483c5cfa6bba574325ef5cb189ed9f2fec4884533f",
+      "bytes": 5299,
+      "license": "OFL-1.1",
+      "package": "@fontsource/ibm-plex-mono",
+      "version": "5.3.0"
+    },
+    {
+      "path": "vendor/licenses/ibm-plex-sans-OFL.txt",
+      "source": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/LICENSE",
+      "sha256": "d0283623ef57e722fd0eb688a8041589670c608ab780cd3612d06ba6f153d3fd",
+      "bytes": 4429,
+      "license": "OFL-1.1",
+      "package": "@fontsource/ibm-plex-sans",
+      "version": "5.3.0"
+    },
+    {
+      "path": "vendor/licenses/luxon-MIT.txt",
+      "source": "https://cdn.jsdelivr.net/npm/luxon@3.7.2/LICENSE.md",
+      "sha256": "6cb2f2bf697ee9c6fa9eb8f227c63ee6e7a3cba42d4717f14c745ef9b6cbc006",
+      "bytes": 1076,
+      "license": "MIT",
+      "package": "luxon",
+      "version": "3.7.2"
+    },
+    {
+      "path": "vendor/licenses/preact-MIT.txt",
+      "source": "https://cdn.jsdelivr.net/npm/preact@10.12.1/LICENSE",
+      "sha256": "1fe6958409c8c257a70c587a18b6f7f412b179b456630790d30b2ec9a8e4b7d4",
+      "bytes": 1087,
+      "license": "MIT",
+      "package": "preact",
+      "version": "10.12.1 license source; bundled dependency range ~10.12.1"
+    },
+    {
+      "path": "vendor/luxon-3.7.2/luxon.min.js",
+      "source": "https://cdn.jsdelivr.net/npm/luxon@3.7.2/build/global/luxon.min.js",
+      "sha256": "516c5fea5c82bdf1fb5c472b9aafdca9cda6dc806b2c12ce9d62c2e0fc348104",
+      "bytes": 81694,
+      "license": "MIT",
+      "package": "luxon",
+      "version": "3.7.2"
+    }
+  ]
+}
