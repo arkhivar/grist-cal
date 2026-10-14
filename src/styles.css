@@ -91,9 +91,14 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
 .mini-day.is-today { color: white; background: var(--accent); border-color: var(--accent); font-weight: 500; }
 .teacher-section { padding-top: 2px; }
 .teacher-list { display: flex; flex-direction: column; gap: 5px; }
-.teacher-filter { border-radius: var(--radius); }
-.teacher-filter label, label.teacher-filter { display: flex; align-items: center; gap: 9px; min-height: 34px; padding: 4px 1px; cursor: pointer; }
+.teacher-visibility-actions { gap: 9px; }
+.teacher-visibility-actions .text-button { font-size: 11px; white-space: nowrap; }
+.teacher-filter { display: flex; align-items: center; border-radius: var(--radius); }
+.teacher-filter label { display: flex; flex: 1; min-width: 0; align-items: center; gap: 7px; min-height: 34px; padding: 4px 1px; cursor: pointer; }
 .teacher-filter:hover { background: #ededeb; }
+.teacher-options { width: 28px; height: 30px; opacity: 0; }
+.teacher-options .icon { width: 18px; height: 18px; transform: rotate(90deg); }
+.teacher-filter:hover .teacher-options, .teacher-filter:focus-within .teacher-options, .teacher-options[aria-expanded="true"] { opacity: 1; }
 .teacher-filter input[type="checkbox"] { width: 15px; height: 15px; flex: 0 0 auto; margin: 0 3px 0 1px; accent-color: var(--teacher-color, var(--accent)); cursor: pointer; }
 .teacher-avatar { display: grid; flex: 0 0 24px; width: 24px; height: 24px; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--teacher-color, var(--accent)) 11%, white); color: var(--teacher-color, var(--accent)); font-size: 9px; font-weight: 500; }
 .teacher-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
@@ -238,13 +243,13 @@ body[data-mode="grist"] .teacher-list { max-height: min(30vh, 310px); overflow-y
 
 dialog { padding: 0; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--surface); box-shadow: 0 12px 50px rgb(24 24 27 / .2); }
 dialog::backdrop { background: rgb(24 24 27 / .24); }
-.lesson-menu { position: fixed; z-index: 60; width: 208px; max-width: calc(100vw - 16px); padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 5px 24px rgb(24 24 27 / .16); }
-.lesson-menu-title { padding: 8px 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
-.lesson-menu button { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 38px; padding: 9px 10px; border: 0; border-radius: 4px; background: transparent; text-align: left; font-size: 13px; }
-.lesson-menu button:hover, .lesson-menu button:focus-visible { background: #f2f4f7; }
-.lesson-menu .icon { width: 17px; height: 17px; }
-.lesson-menu .delete-menu-item { color: #b23e3e; }
-.lesson-menu .delete-menu-item:hover, .lesson-menu .delete-menu-item:focus-visible { background: #fff2f2; }
+.action-menu { position: fixed; z-index: 60; width: 208px; max-width: calc(100vw - 16px); padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 5px 24px rgb(24 24 27 / .16); }
+.action-menu-title { padding: 8px 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.action-menu button { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 38px; padding: 9px 10px; border: 0; border-radius: 4px; background: transparent; text-align: left; font-size: 13px; }
+.action-menu button:hover, .action-menu button:focus-visible { background: #f2f4f7; }
+.action-menu .icon { width: 17px; height: 17px; }
+.action-menu .delete-menu-item { color: #b23e3e; }
+.action-menu .delete-menu-item:hover, .action-menu .delete-menu-item:focus-visible { background: #fff2f2; }
 .button.primary.danger { background: #b23e3e; border-color: #b23e3e; color: white; }
 .button.primary.danger:hover { background: #963434; border-color: #963434; }
 .lesson-dialog { width: 550px; max-width: calc(100vw - 36px); max-height: min(88vh, 900px); max-height: min(88dvh, 900px); overflow: hidden; }
@@ -441,6 +446,13 @@ kbd { display: inline-grid; min-width: 25px; min-height: 24px; place-items: cent
   .search-control { width: 130px; }
   .dialog-footer .demo-badge { display: none; }
   .calendar-context { padding-inline: 10px; }
+}
+
+@media (hover: none), (pointer: coarse), (max-width: 760px) {
+  .teacher-options { opacity: 1; width: 40px; height: 44px; }
+  .teacher-filter label { min-height: 44px; }
+  .teacher-visibility-actions .text-button { min-height: 40px; }
+  #teacher-menu button { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

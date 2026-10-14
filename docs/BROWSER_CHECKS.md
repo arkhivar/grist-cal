@@ -69,3 +69,15 @@ These new interactions were checked in the synthetic demo using the in-app brows
 Separate live API checks against an isolated disposable lesson confirmed creation and readback, HTTP 200 for soft deletion, absence from the next normalized snapshot, HTTP 200 when retrying the same delete mutation and HTTP 409 for a stale edit. The deleted row retained its UID and scheduled times. Only the unlinked probe was removed afterward; all 3,211 existing attendance rows retained their checked input values and links. No live Duplicate/Delete menu clicks were performed on this run.
 
 Not established by these checks: physical touch/long-press behavior, Safari/Firefox compatibility, browser timezone emulation, recurring series, or teacher-specific access rules. The local development service account is not a production authorization model.
+
+## Calendar visibility controls — 2026-10-14
+
+Implemented Hide all / Show all and the teacher-row **Display this only** menu. JavaScript syntax checks, all 99 existing automated tests and all 19 vendor hashes pass. Code review covers separate checkbox/menu controls, keyboard handling, focus restoration and preservation of search/date/view. No Grist schema or record writes are involved.
+
+**Browser verification is pending:** the browser tool rejected access to the local demo under its URL policy. No alternate browser route was used. The following are expected results to verify, not observations:
+
+- Demo week: Hide all shows 0 lessons; Show all restores 18; Anna's Display this only shows 5 and selects only her checkbox.
+- All three actions retain an active search, the current date and the current view. Individual checkboxes still work afterward.
+- Opening or dismissing a teacher menu does not toggle its checkbox. Enter/Space and arrow keys open the menu; Escape restores focus; Tab continues through the sidebar controls. On a phone, Escape closes the menu before a subsequent Escape closes the drawer.
+- At 390px, the menu button is visible without hover. Menus fit within the viewport and close on scroll, resize, outside click or sidebar dismissal.
+- Refresh preserves Hide all and solo selection. Reset restores all teachers and the sample week. Existing lesson Duplicate/Delete menus still open and dismiss correctly.

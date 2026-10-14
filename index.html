@@ -58,7 +58,7 @@
           <div id="mini-calendar" class="mini-calendar"></div>
         </section>
         <section class="teacher-section" aria-labelledby="teachers-heading">
-          <div class="section-heading"><h2 id="teachers-heading">Teachers</h2><button id="show-all-teachers" class="text-button">Show all</button></div>
+          <div class="section-heading"><h2 id="teachers-heading">Teachers</h2><div class="teacher-visibility-actions"><button id="hide-all-teachers" class="text-button" aria-label="Hide all calendars">Hide all</button><button id="show-all-teachers" class="text-button" aria-label="Show all calendars">Show all</button></div></div>
           <div id="teacher-list" class="teacher-list"></div>
           <p class="filter-note">Choose whose lessons you see.</p>
         </section>
@@ -93,8 +93,12 @@
       <div class="dialog-footer"><span id="editor-mode" class="demo-badge">Demo</span><span id="editor-version" class="editor-version">New lesson</span><button type="button" id="cancel-editor" class="button">Cancel</button><button type="submit" id="save-lesson" class="button primary">Save lesson</button></div>
     </form>
   </dialog>
-  <div id="lesson-menu" class="lesson-menu" role="menu" aria-label="Lesson actions" hidden>
-    <div id="lesson-menu-title" class="lesson-menu-title" role="presentation"></div>
+  <div id="teacher-menu" class="action-menu" role="menu" aria-label="Calendar options" hidden>
+    <div id="teacher-menu-title" class="action-menu-title" role="presentation"></div>
+    <button id="display-only-teacher" type="button" role="menuitem" tabindex="-1">Display this only</button>
+  </div>
+  <div id="lesson-menu" class="action-menu" role="menu" aria-label="Lesson actions" hidden>
+    <div id="lesson-menu-title" class="action-menu-title" role="presentation"></div>
     <button id="duplicate-lesson" type="button" role="menuitem" tabindex="-1"><svg class="icon" aria-hidden="true"><use href="#i-copy"/></svg>Duplicate</button>
     <button id="delete-lesson" type="button" role="menuitem" tabindex="-1" class="delete-menu-item"><svg class="icon" aria-hidden="true"><use href="#i-delete"/></svg>Delete</button>
   </div>

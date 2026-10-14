@@ -31,6 +31,7 @@ Without Grist configuration, the command above starts the demo. With configurati
 ## What works
 
 - Day, week, month and agenda views, a mini-calendar, teacher filters and lesson/group/student search.
+- **Hide all / Show all** control every teacher calendar at once. Each teacher's **⋮** menu offers **Display this only**; it appears on hover or keyboard focus and stays visible on small screens and touch devices. These visibility controls preserve the current search, date and view and do not write to Grist.
 - Create and edit lessons; drag to move them and resize to change their duration. In connected mode these changes and cancellation persist in Grist. The editor also provides keyboard-accessible time fields.
 - Right-click an event, press Shift+F10 on a focused event, or use the editor's **⋯** menu to **Duplicate** or **Delete**. Duplicate opens an unsaved copy with a fresh identity, copied details and checklist, scheduled status and no attendance. Delete asks for confirmation, then hides the lesson while preserving its Grist row and attendance links.
 - Read-only attendance linked to each lesson. Connected records are labelled **Recorded in ALL_ATT**; the app does not infer presence or absence from notes or financial fields. Scheduling preserves attendance links and does not change original attendance dates or financial inputs.

@@ -60,6 +60,7 @@ async function start() {
   const store = isLive ? await createGristStore({ csrfToken: config.csrfToken }) : createMemoryStore({ anchorDate, delayMs: 450 });
   let snapshot = store.getSnapshot();
   let selectedTeachers = new Set(snapshot.teachers.map(t => t.id));
+  let includeNewTeachers = true;
   let focusedDate = requestedDate || anchorDate;
   let miniMonth = focusedDate.slice(0, 7);
   let currentStart = startOfWeek(focusedDate);
@@ -73,6 +74,7 @@ async function start() {
   let searchTimer;
   let editorOpener;
   let lessonMenu = null;
+  let teacherMenu = null;
   const mobile = window.matchMedia('(max-width: 760px)');
 
   function notify(message, kind = 'success') {
@@ -154,7 +156,25 @@ async function start() {
   }
 
   function renderTeachers() {
-    $('teacher-list').innerHTML = snapshot.teachers.map(teacher => `<label class="teacher-filter" style="--teacher-color:${escape(teacher.color || '#71717a')}"><input type="checkbox" value="${escape(teacher.id)}" ${selectedTeachers.has(teacher.id) ? 'checked' : ''} aria-label="Show ${escape(teacher.name)}"><span class="teacher-avatar" aria-hidden="true">${escape(teacher.initials || teacher.name.slice(0, 2))}</span><span class="teacher-name" title="${escape(teacher.name)}">${escape(teacher.name)}</span></label>`).join('');
+    const list = $('teacher-list');
+    const focused = teacherMenu?.opener || (list.contains(document.activeElement) ? document.activeElement : null);
+    const focusedId = focused?.dataset.teacherOptions ?? focused?.value;
+    closeTeacherMenu();
+    list.innerHTML = snapshot.teachers.map(teacher => `<div class="teacher-filter" style="--teacher-color:${escape(teacher.color || '#71717a')}"><label><input type="checkbox" value="${escape(teacher.id)}" ${selectedTeachers.has(teacher.id) ? 'checked' : ''} aria-label="Show ${escape(teacher.name)}"><span class="teacher-avatar" aria-hidden="true">${escape(teacher.initials || teacher.name.slice(0, 2))}</span><span class="teacher-name" title="${escape(teacher.name)}">${escape(teacher.name)}</span></label><button type="button" class="icon-button teacher-options" data-teacher-options="${escape(teacher.id)}" aria-label="Calendar options for ${escape(teacher.name)}" title="Calendar options for ${escape(teacher.name)}" aria-haspopup="menu" aria-controls="teacher-menu" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-more"/></svg></button></div>`).join('');
+    if (focused) {
+      const replacement = [...list.querySelectorAll(focused.matches('button') ? 'button' : 'input')]
+        .find(element => (element.dataset.teacherOptions ?? element.value) === focusedId);
+      restoreMenuFocus(replacement || $('show-all-teachers'));
+    }
+  }
+
+  function setTeacherVisibility(ids, includeNew = false) {
+    closeTeacherMenu(true);
+    selectedTeachers = new Set(ids);
+    includeNewTeachers = includeNew;
+    // Keep the sidebar controls in place so filtering does not lose keyboard focus.
+    for (const checkbox of $('teacher-list').querySelectorAll('input')) checkbox.checked = selectedTeachers.has(checkbox.value);
+    renderEvents();
   }
 
   function renderMini() {
@@ -178,6 +198,7 @@ async function start() {
   }
 
   function closeMobileSidebar() {
+    closeTeacherMenu(true);
     const focusWasInside = $('sidebar').contains(document.activeElement);
     document.body.classList.remove('sidebar-open');
     $('sidebar-backdrop').hidden = true;
@@ -263,6 +284,7 @@ async function start() {
   function openEditor(lessonId, range = {}, duplicate) {
     if (busy || refreshing) return;
     closeLessonMenu();
+    closeTeacherMenu(true);
     const existing = snapshot.lessons.find(lesson => lesson.id === lessonId);
     const day = range.date || focusedDate;
     const startTime = range.start || fromSchoolInput(`${day}T09:00`);
@@ -307,10 +329,45 @@ async function start() {
     if (restoreFocus) restoreMenuFocus(target);
   }
 
+  function closeTeacherMenu(restoreFocus = false) {
+    if (!teacherMenu) return;
+    const { opener } = teacherMenu;
+    teacherMenu = null;
+    $('teacher-menu').hidden = true;
+    opener.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) restoreMenuFocus(opener);
+  }
+
+  function positionMenu(menu, opener, point) {
+    const anchor = opener.getBoundingClientRect();
+    const bounds = menu.getBoundingClientRect();
+    const x = point?.x ?? anchor.right - bounds.width;
+    const y = point?.y ?? anchor.bottom + 5;
+    menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - bounds.width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - bounds.height - 8))}px`;
+  }
+
+  function openTeacherMenu(opener) {
+    const teacher = snapshot.teachers.find(item => item.id === opener.dataset.teacherOptions);
+    if (!teacher) return;
+    if (teacherMenu?.opener === opener) { closeTeacherMenu(true); return; }
+    closeLessonMenu();
+    closeTeacherMenu();
+    teacherMenu = { id: teacher.id, opener };
+    const menu = $('teacher-menu');
+    menu.setAttribute('aria-label', `Calendar options for ${teacher.name}`);
+    $('teacher-menu-title').textContent = teacher.name;
+    opener.setAttribute('aria-expanded', 'true');
+    menu.hidden = false;
+    positionMenu(menu, opener);
+    $('display-only-teacher').focus({ preventScroll: true });
+  }
+
   function openLessonMenu(id, opener, point) {
     if (busy || refreshing || $('confirm-dialog').open) return;
     const lesson = snapshot.lessons.find(item => item.id === id);
     if (!lesson) return;
+    closeTeacherMenu();
     closeLessonMenu();
     const menu = $('lesson-menu');
     // A menu opened from the modal must share its top layer and focus scope.
@@ -321,12 +378,7 @@ async function start() {
     $('lesson-menu-title').textContent = lesson.title;
     opener.setAttribute('aria-expanded', 'true');
     menu.hidden = false;
-    const anchor = opener.getBoundingClientRect();
-    const bounds = menu.getBoundingClientRect();
-    const x = point?.x ?? anchor.right - bounds.width;
-    const y = point?.y ?? anchor.bottom + 5;
-    menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - bounds.width - 8))}px`;
-    menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - bounds.height - 8))}px`;
+    positionMenu(menu, opener, point);
     $('duplicate-lesson').focus({ preventScroll: true });
   }
 
@@ -378,9 +430,27 @@ async function start() {
   });
   document.addEventListener('pointerdown', event => {
     if (lessonMenu && !$('lesson-menu').contains(event.target) && !lessonMenu.opener.contains(event.target)) closeLessonMenu(true);
+    if (teacherMenu && !$('teacher-menu').contains(event.target) && !teacherMenu.opener.contains(event.target)) closeTeacherMenu(true);
   });
-  document.addEventListener('scroll', () => closeLessonMenu(true), true);
-  window.addEventListener('resize', () => closeLessonMenu(true));
+  document.addEventListener('focusin', event => {
+    if (teacherMenu && !$('teacher-menu').contains(event.target) && !teacherMenu.opener.contains(event.target)) closeTeacherMenu();
+  });
+  document.addEventListener('scroll', () => { closeLessonMenu(true); closeTeacherMenu(true); }, true);
+  window.addEventListener('resize', () => { closeLessonMenu(true); closeTeacherMenu(true); });
+  $('teacher-menu').addEventListener('keydown', event => {
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault(); event.stopPropagation();
+      $('display-only-teacher').focus({ preventScroll: true });
+    } else if (event.key === 'Escape') {
+      event.preventDefault(); event.stopPropagation(); closeTeacherMenu(true);
+    } else if (event.key === 'Tab') {
+      // Continue normal tab order from the menu's opener, including Shift+Tab.
+      closeTeacherMenu(true);
+    }
+  });
+  $('display-only-teacher').addEventListener('click', () => {
+    if (teacherMenu) setTeacherVisibility([teacherMenu.id]);
+  });
 
   async function saveEditor(event) {
     event.preventDefault();
@@ -474,6 +544,7 @@ async function start() {
     },
     datesSet(info) {
       closeLessonMenu();
+      closeTeacherMenu(true);
       currentStart = info.startStr.slice(0, 10);
       currentEnd = info.endStr.slice(0, 10);
       $('view-title').textContent = info.view.title;
@@ -530,10 +601,8 @@ async function start() {
   });
 
   function acceptSnapshot(next) {
-    const previousTeacherIds = new Set(snapshot.teachers.map(teacher => teacher.id));
-    const allTeachersWereSelected = previousTeacherIds.size === selectedTeachers.size && [...previousTeacherIds].every(id => selectedTeachers.has(id));
     snapshot = next;
-    selectedTeachers = new Set(snapshot.teachers.filter(teacher => allTeachersWereSelected || selectedTeachers.has(teacher.id)).map(teacher => teacher.id));
+    selectedTeachers = new Set(snapshot.teachers.filter(teacher => includeNewTeachers || selectedTeachers.has(teacher.id)).map(teacher => teacher.id));
     renderTeachers();
     if (editor?.id && !editorSaving) {
       const current = snapshot.lessons.find(l => l.id === editor.id);
@@ -559,10 +628,22 @@ async function start() {
     const checkbox = event.target.closest('input');
     if (!checkbox) return;
     if (checkbox.checked) selectedTeachers.add(checkbox.value); else selectedTeachers.delete(checkbox.value);
+    includeNewTeachers = selectedTeachers.size === snapshot.teachers.length;
     renderEvents();
   });
+  $('teacher-list').addEventListener('click', event => {
+    const opener = event.target.closest('[data-teacher-options]');
+    if (opener) openTeacherMenu(opener);
+  });
+  $('teacher-list').addEventListener('keydown', event => {
+    const opener = event.target.closest('[data-teacher-options]');
+    if (opener && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
+      event.preventDefault(); openTeacherMenu(opener);
+    }
+  });
+  $('hide-all-teachers').addEventListener('click', () => setTeacherVisibility([]));
   $('show-all-teachers').addEventListener('click', () => {
-    selectedTeachers = new Set(snapshot.teachers.map(t => t.id)); renderTeachers(); renderEvents();
+    setTeacherVisibility(snapshot.teachers.map(t => t.id), true);
   });
   $('mini-previous').addEventListener('click', () => moveMiniMonth(-1));
   $('mini-next').addEventListener('click', () => moveMiniMonth(1));
@@ -580,6 +661,7 @@ async function start() {
   $('clear-filters').addEventListener('click', () => {
     const filtered = selectedTeachers.size !== snapshot.teachers.length || $('search').value.trim();
     $('search').value = ''; selectedTeachers = new Set(snapshot.teachers.map(t => t.id));
+    includeNewTeachers = true;
     renderTeachers();
     if (!isLive) calendar.gotoDate(anchorDate);
     else if (!filtered) {
@@ -590,6 +672,7 @@ async function start() {
     renderEvents();
   });
   $('sidebar-toggle').addEventListener('click', () => {
+    closeTeacherMenu(true);
     if (mobile.matches) {
       const open = document.body.classList.toggle('sidebar-open');
       $('sidebar-backdrop').hidden = !open;
@@ -658,6 +741,7 @@ async function start() {
     $('fail-next-save').checked = false;
     $('search').value = '';
     selectedTeachers = new Set(snapshot.teachers.map(t => t.id));
+    includeNewTeachers = true;
     renderTeachers(); calendar.gotoDate(anchorDate); renderEvents();
     notify('Demo reset. The sample week is ready.');
   });
@@ -666,7 +750,7 @@ async function start() {
   $('help-done').addEventListener('click', () => $('help-dialog').close());
   $('toast-close').addEventListener('click', () => { $('toast').hidden = true; });
   document.addEventListener('keydown', event => {
-    if (lessonMenu) return;
+    if (lessonMenu || teacherMenu) return;
     if (event.key === 'Escape' && document.body.classList.contains('sidebar-open')) { closeMobileSidebar(); return; }
     if (event.ctrlKey || event.metaKey || event.altKey || event.target.closest('input,select,textarea,[contenteditable="true"]') || document.querySelector('dialog[open]')) return;
     if (event.key.toLowerCase() === 'c') { event.preventDefault(); openEditor(); }

@@ -8,6 +8,8 @@ The local checkout was established from `arkhivar/grist-cal`, original main comm
 
 The standalone interface provides week/day/month/agenda views, date navigation, teacher visibility, search, a lesson editor, click/drag creation, moving/resizing, cancellation, duplication, soft deletion, manual checklist text and linked read-only attendance. Phone-width screens start in Day view with a sidebar drawer. All scheduling uses Asia/Vladivostok independently of the device timezone.
 
+Teacher visibility now includes **Hide all / Show all** and a per-teacher **Display this only** menu. Menus appear on hover/focus and remain visible on small screens or touch devices. Visibility actions retain search, date and view without writing data; refresh preserves hidden/solo selections, including when new teachers arrive. Show all, Clear filters and Reset opt back into showing newly discovered teachers. Reload still starts with every teacher visible. Keyboard dismissal/focus restoration and viewport-clamped menu placement are implemented, but the new menu's browser verification is pending because browser security rejected access to the local preview on this run.
+
 FullCalendar Standard 6.1.21, its Luxon plugin, Luxon 3.7.2 and IBM Plex fonts are vendored. Exact sources, licenses and hashes are included. No dependency installation or build step is needed.
 
 ## Data modes
