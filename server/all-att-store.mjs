@@ -1,5 +1,7 @@
 import { editableFields, storeError, validateLesson } from '../src/lesson-validation.js';
+import { schoolToday } from '../src/domain.js';
 import { ALL_ATT_FIELDS, classifyRow, lessonFields, lessonVersion, normalizeAllAttSnapshot } from './all-att-model.mjs';
+import { DATE_REGISTRY_FIELDS, DATE_REGISTRY_TABLE, inspectDateRegistry } from './date-registry.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH = /^[a-f0-9]{64}$/;
@@ -108,7 +110,36 @@ export function createAllAttStore({ client } = {}) {
     ]);
     return { attendance, performance, folks };
   }
-  async function getSnapshot() { return normalizeAllAttSnapshot(await readTables()); }
+  async function readCalendarDates() {
+    try {
+      const records = await client.records(DATE_REGISTRY_TABLE, DATE_REGISTRY_FIELDS);
+      return { available: true, ...inspectDateRegistry(records) };
+    } catch {
+      // Calendar metadata is optional for displaying and editing a valid schedule.
+      // Keep private upstream details out of the snapshot when this read fails.
+      return { available: false, ...inspectDateRegistry([]) };
+    }
+  }
+  async function getSnapshot() {
+    // Load date metadata once per snapshot; save preflight/readback do not need it.
+    const [tables, registry] = await Promise.all([readTables(), readCalendarDates()]);
+    const snapshot = normalizeAllAttSnapshot(tables);
+    const dates = new Map(registry.rows.map(row => [row.date, row]));
+    const unmatchedDates = new Set();
+    let unmatchedLessonCount = 0;
+    for (const lesson of snapshot.lessons) {
+      const date = schoolToday(lesson.start);
+      lesson.calendarDateId = dates.get(date)?.id || '';
+      if (!lesson.calendarDateId) {
+        unmatchedDates.add(date);
+        unmatchedLessonCount += 1;
+      }
+    }
+    return { ...snapshot, calendarDates: registry.rows, meta: { ...snapshot.meta,
+      dateRegistry: { ...registry.summary, available: registry.available,
+        unmatchedLessonCount, unmatchedLessonDateCount: unmatchedDates.size },
+    } };
+  }
   function savedLesson(tables, record) {
     if (!validRevision(record)) throw uncertain();
     const attendance = [...tables.attendance.filter(row => row.id !== record.id), record];

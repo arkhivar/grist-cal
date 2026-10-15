@@ -96,3 +96,17 @@ Separate live HTTP/API checks against four disposable ALL_ATT rows verified:
 - Temporary rows were removed after checking their unique identities and origins. Original input cells remain unchanged except automatic timestamps on rows linked during preparation. The old Calendar_Lessons table is unchanged.
 
 Pending browser checks: create a group and individual lesson using the new selectors; verify existing student/group references remain read-only; duplicate and change a copied reference; search a pending individual booking by student name; check dirty-draft recovery, keyboard focus and 390px layout with the added controls. Dragging/resizing needs another real-browser check against this adapter before claiming it has passed.
+
+## DateRegistry context — 2026-10-15
+
+**Interactive verification is pending.** The existing local-preview URL-policy restriction was respected; no alternate browser route was attempted. Automated helper checks establish explicit-closure rules, timezone conversion, exclusive midnight endpoints, safe text rendering and avoidance of duplicate live-region announcements. They do not establish rendered geometry or screen-reader behavior.
+
+Expected browser checks, not observations:
+
+- In an isolated date fixture, explicit Closed shows subtle week/day/month shading and a text label; holiday text is visible or available through date descriptions. Weekend alone does not mark a day closed.
+- The lesson editor shows complete holiday/term/status text for the selected school dates. An end exactly at midnight does not include the following date. Save remains available on closed dates.
+- Refresh after changing metadata updates date labels and an open editor without losing unsaved text, current date, view or teacher selections.
+- Date labels remain contained at desktop and 390px widths; keyboard date controls and time-field descriptions remain usable. Long holiday names are safely truncated in compact cells, with full descriptive text available.
+- Demo mode retains its existing appearance and behavior without registry data.
+
+Separate live API checks verified 3,653 registry dates, correct source links for all dated attendance/transaction rows, unchanged lesson revision after metadata changes, date-link movement across school midnight, and lesson visibility with missing/duplicate registry dates. All temporary probes were removed. Original inputs and definitions were unchanged. These checks establish live data behavior, not browser rendering; see [STATE.md](STATE.md).

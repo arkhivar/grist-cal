@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createAllAttStore } from '../server/all-att-store.mjs';
 import { ALL_ATT_FIELDS, lessonVersion } from '../server/all-att-model.mjs';
+import { DATE_REGISTRY_FIELDS } from '../server/date-registry.mjs';
 
 const UID = '12345678-1234-4123-8123-123456789abc';
 const NEW_UID = '22345678-1234-4123-8123-123456789abc';
@@ -28,6 +29,12 @@ function initialTables() {
       { id: 18, fields: { A: 'Teacher Two', type: 'team' } }, { id: 40, fields: { A: 'Group A', type: 'group' } }],
     FOLKS: [{ id: 31, fields: { name: 'Fictional Student', private_finance: 99 } },
       { id: 32, fields: { name: 'Another Fictional Student' } }],
+    DateRegistry: [{ id: 101, fields: { Date: Date.parse('2026-10-13T00:00:00Z') / 1000,
+      Day: 'Tuesday', Day_Parity: 1, Month_Parity: 1, Is_Weekend: false,
+      School_Day: 'Teaching day', Holiday_Name: '', Academic_Term: 'Autumn', private_notes: 'Not for the calendar' } },
+    { id: 102, fields: { Date: Date.parse('2026-10-14T00:00:00Z') / 1000,
+      Day: 'Wednesday', Day_Parity: 0, Month_Parity: 1, Is_Weekend: false,
+      School_Day: 'Closed', Holiday_Name: 'Fictional school holiday', Academic_Term: 'Autumn' } }],
     ALL_ATT: [{ id: 7, fields },
       { id: 55, fields: { ...fields, ...blankCalendar(), student: ['L', 31], Calendar_Parent: 7, notes: 'Attendance notes' } },
       { id: 56, fields: { ...fields, ...blankCalendar(), student: ['L', 32], group2: ['L'],
@@ -35,13 +42,19 @@ function initialTables() {
     Calendar_Lessons: [{ id: 9, fields: { Title: 'Untouched old calendar' } }],
   };
 }
-function mockClient({ beforeMutation, afterMutation, response, rejectMutation, failReadback, invalidRevision = false } = {}) {
+function mockClient({ beforeMutation, afterMutation, response, rejectMutation, failReadback, failRegistry = false,
+  invalidRevision = false } = {}) {
   const tables = initialTables();
   const reads = [];
   const writes = [];
   let nextId = 57;
   const recalculate = () => {
     for (const row of tables.ALL_ATT) {
+      // Simulate the independent DateRegistry formula ref; it must never affect CAS.
+      const localDay = new Date((row.fields.start + 10 * 3600) * 1000).toISOString().slice(0, 10);
+      row.fields.Calendar_Date = tables.DateRegistry.find(date =>
+        typeof date.fields.Date === 'number' && Number.isFinite(date.fields.Date) &&
+        new Date(date.fields.Date * 1000).toISOString().slice(0, 10) === localDay)?.id || 0;
       row.fields.Calendar_Revision = invalidRevision ? 'formula-error' : createHash('sha256')
         .update(JSON.stringify(Object.fromEntries(ALL_ATT_FIELDS.filter(field => field !== 'Calendar_Revision')
           .map(field => [field, row.fields[field]])))).digest('hex');
@@ -52,6 +65,7 @@ function mockClient({ beforeMutation, afterMutation, response, rejectMutation, f
     async records(table, fields) {
       recalculate();
       reads.push({ table, fields: [...fields] });
+      if (table === 'DateRegistry' && failRegistry) throw new Error('Private registry URL and connection details');
       if (writes.length && table === 'ALL_ATT' && failReadback) throw new Error('Private upstream read failure');
       return tables[table].map(record => ({ id: record.id,
         fields: Object.fromEntries(fields.map(field => [field, clone(record.fields[field])])) }));
@@ -93,14 +107,122 @@ const freshDraft = () => ({ clientId: NEW_UID, type: 'lesson', title: 'New lesso
   participantText: '', checklist: '', notes: '', status: 'scheduled', lessonKind: 'group', studentIds: [], groupIds: [] });
 const groupLesson = async store => (await store.getSnapshot()).lessons.find(lesson => lesson.id === 'all-att:7');
 
-test('ALL_ATT snapshot projects only the three source tables and never reads the legacy lesson table', async () => {
+test('ALL_ATT snapshot projects scheduling sources and date metadata once, never the legacy lesson table', async () => {
   const client = mockClient();
   const snapshot = await createAllAttStore({ client }).getSnapshot();
   assert.deepEqual(snapshot.lessons.map(lesson => lesson.id).sort(), ['all-att:56', 'all-att:7']);
   assert.ok(snapshot.attendance.some(record => record.lessonId === 'all-att:7'));
   assert.deepEqual(client.reads, [{ table: 'ALL_ATT', fields: [...ALL_ATT_FIELDS] },
-    { table: 'PERFORMANCE', fields: ['A', 'type'] }, { table: 'FOLKS', fields: ['name'] }]);
+    { table: 'PERFORMANCE', fields: ['A', 'type'] }, { table: 'FOLKS', fields: ['name'] },
+    { table: 'DateRegistry', fields: [...DATE_REGISTRY_FIELDS] }]);
   assert.ok(!JSON.stringify(snapshot).includes('private_finance'));
+  assert.ok(!JSON.stringify(snapshot).includes('private_notes'));
+  assert.ok(!ALL_ATT_FIELDS.includes('Calendar_Date'));
+  assert.deepEqual(snapshot.calendarDates, [
+    { id: 'date:101', date: '2026-10-13', day: 'Tuesday', dayParity: 1, monthParity: 1, isWeekend: false,
+      schoolDay: 'teaching', holidayName: '', academicTerm: 'Autumn' },
+    { id: 'date:102', date: '2026-10-14', day: 'Wednesday', dayParity: 0, monthParity: 1, isWeekend: false,
+      schoolDay: 'closed', holidayName: 'Fictional school holiday', academicTerm: 'Autumn' },
+  ]);
+  assert.ok(snapshot.lessons.every(lesson => lesson.calendarDateId === 'date:101'));
+  assert.equal(snapshot.meta.dateRegistry.available, true);
+  assert.equal(snapshot.meta.dateRegistry.unmatchedLessonCount, 0);
+});
+
+test('DateRegistry follows the Vladivostok date after a move without entering source writes or save readback', async () => {
+  const client = mockClient();
+  const store = createAllAttStore({ client });
+  const lesson = await groupLesson(store);
+  assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Date, 101);
+  client.reads.length = 0;
+  const saved = await store.saveLesson({ ...lesson,
+    start: '2026-10-13T14:30:00Z', end: '2026-10-13T15:30:00Z', calendarDateId: 'date:999', Calendar_Date: 999 },
+  { expectedVersion: lesson.version, mutationId: MUTATION });
+  assert.equal(saved.start, '2026-10-13T14:30:00.000Z');
+  assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Date, 102, 'Derived ref recomputes without changing the save contract');
+  assert.equal(client.tables.ALL_ATT[1].fields.Calendar_Date, 101, 'Moving a group does not move its attendance children');
+  assert.equal(client.reads.filter(read => read.table === 'DateRegistry').length, 0);
+  assert.ok(client.reads.filter(read => read.table === 'ALL_ATT').every(read => !read.fields.includes('Calendar_Date')));
+  assert.deepEqual(client.writes[0].body.records[0].fields, {
+    Calendar_Mutation: MUTATION, start: Date.parse('2026-10-13T14:30:00Z') / 1000,
+    end: Date.parse('2026-10-13T15:30:00Z') / 1000,
+  });
+  const after = await store.getSnapshot();
+  assert.equal(after.lessons.find(item => item.id === lesson.id).calendarDateId, 'date:102');
+  assert.equal(after.lessons.find(item => item.id === 'all-att:56').calendarDateId, 'date:101');
+  assert.equal(after.meta.dateRegistry.unmatchedLessonCount, 0);
+  assert.equal(client.reads.filter(read => read.table === 'DateRegistry').length, 1);
+});
+
+test('DateRegistry metadata and derived reference changes do not invalidate an open lesson editor', async () => {
+  const client = mockClient();
+  const store = createAllAttStore({ client });
+  const lesson = await groupLesson(store);
+  client.tables.DateRegistry[0].id = 201;
+  Object.assign(client.tables.DateRegistry[0].fields,
+    { School_Day: 'Closed', Holiday_Name: 'New fictional holiday', Academic_Term: 'Revised term' });
+  const refreshed = await store.getSnapshot();
+  const current = refreshed.lessons.find(item => item.id === lesson.id);
+  assert.equal(current.calendarDateId, 'date:201');
+  assert.equal(current.version, lesson.version);
+  assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Date, 201);
+  assert.equal(refreshed.calendarDates[0].holidayName, 'New fictional holiday');
+  client.reads.length = 0;
+  const saved = await store.saveLesson({ ...lesson, room: 'New room' },
+    { expectedVersion: lesson.version, mutationId: MUTATION });
+  assert.equal(saved.room, 'New room');
+  assert.equal(client.reads.filter(read => read.table === 'DateRegistry').length, 0);
+  assert.deepEqual(client.writes[0].body.records[0].fields, { Calendar_Mutation: MUTATION, Calendar_Room: 'New room' });
+});
+
+test('missing and duplicate registry days warn without hiding or moving valid lessons', async () => {
+  const client = mockClient();
+  const store = createAllAttStore({ client });
+  const before = await store.getSnapshot();
+  client.tables.DateRegistry.push({ id: 103, fields: { ...client.tables.DateRegistry[0].fields, Holiday_Name: 'Conflicting label' } });
+  const duplicate = await store.getSnapshot();
+  assert.deepEqual(duplicate.lessons.map(({ id, start, end }) => ({ id, start, end })),
+    before.lessons.map(({ id, start, end }) => ({ id, start, end })));
+  assert.deepEqual(duplicate.calendarDates.map(date => date.date), ['2026-10-14']);
+  assert.ok(duplicate.lessons.every(lesson => lesson.calendarDateId === ''));
+  assert.equal(duplicate.meta.dateRegistry.duplicateDateCount, 1);
+  assert.equal(duplicate.meta.dateRegistry.duplicateRowCount, 2);
+  assert.equal(duplicate.meta.dateRegistry.unmatchedLessonCount, 2);
+  assert.equal(duplicate.meta.dateRegistry.unmatchedLessonDateCount, 1);
+  client.tables.DateRegistry = [];
+  const missing = await store.getSnapshot();
+  assert.equal(missing.lessons.length, 2);
+  assert.equal(missing.meta.dateRegistry.available, true);
+  assert.equal(missing.meta.dateRegistry.duplicateDateCount, 0);
+  assert.equal(missing.meta.dateRegistry.unmatchedLessonCount, 2);
+  assert.equal(missing.meta.dateRegistry.unmatchedLessonDateCount, 1);
+  assert.equal(client.writes.length, 0, 'Snapshot reads must never create registry rows');
+});
+
+test('registry read failures preserve the usable schedule and expose only an aggregate warning', async () => {
+  const client = mockClient({ failRegistry: true });
+  const store = createAllAttStore({ client });
+  const snapshot = await store.getSnapshot();
+  assert.equal(snapshot.lessons.length, 2);
+  assert.deepEqual(snapshot.calendarDates, []);
+  assert.equal(snapshot.meta.dateRegistry.available, false);
+  assert.equal(snapshot.meta.dateRegistry.unmatchedLessonCount, 2);
+  assert.ok(!JSON.stringify(snapshot).includes('Private registry'));
+  const lesson = snapshot.lessons.find(item => item.id === 'all-att:7');
+  const saved = await store.saveLesson({ ...lesson, room: 'Still editable' },
+    { expectedVersion: lesson.version, mutationId: MUTATION });
+  assert.equal(saved.room, 'Still editable');
+  assert.equal(client.reads.filter(read => read.table === 'DateRegistry').length, 1);
+});
+
+test('registry fallback does not suppress errors reading the actual attendance source', async () => {
+  const client = mockClient({ failRegistry: true });
+  const originalRead = client.records.bind(client);
+  client.records = (table, fields) => table === 'ALL_ATT'
+    ? Promise.reject(Object.assign(new Error('Schedule unavailable'), { code: 'GRIST_UNAVAILABLE' }))
+    : originalRead(table, fields);
+  await assert.rejects(createAllAttStore({ client }).getSnapshot(), { code: 'GRIST_UNAVAILABLE' });
+  assert.equal(client.writes.length, 0);
 });
 
 test('ALL_ATT lesson edits write existing start/end/t and new calendar fields only', async () => {

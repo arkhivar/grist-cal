@@ -26,7 +26,9 @@ Follow [Grist setup and preparation](docs/GRIST.md) to supply server-only creden
 
 The setup command ensures the additive schema and previews the preparation plan by default. `--prepare-all-att` applies that plan; optional `--include-legacy-calendar` also preserves standalone lessons created in the former calendar table. Individual lessons use their existing `ALL_ATT` row. Group attendance references a header in the same table through `Calendar_Parent`. Existing columns and the old `Calendar_Lessons` table remain in place; preparation can resume after partial completion.
 
-Without Grist configuration, the command above starts the demo. With configuration, it starts the connected calendar. The browser shows which mode is active. A connected server may use port 4174 alongside the demo on 4173.
+The separate [DateRegistry setup](docs/GRIST.md#prepare-the-shared-date-registry) adds shared day metadata and derived date references. Its preview command is `node scripts/date-registry-setup.mjs --grist-stdin --from 2020-01-01 --through 2029-12-31 --include-transactions`; supply the connection JSON through stdin as described in the setup guide. Add `--populate` to fill the requested range. That initial range contains 3,653 days. Existing helper columns and date policy values are preserved.
+
+Without Grist configuration, `node scripts/serve.mjs` starts the demo. With configuration, it starts the connected calendar. The browser shows which mode is active. A connected server may use port 4174 alongside the demo on 4173.
 
 ## What works
 
@@ -36,11 +38,12 @@ Without Grist configuration, the command above starts the demo. With configurati
 - Right-click an event, press Shift+F10 on a focused event, or use the editor's **⋯** menu to **Duplicate** or **Delete**. Duplicate opens an unsaved copy with a fresh identity, copied details and checklist, scheduled status and no attendance. Delete asks for confirmation, then hides the lesson while preserving its Grist row and attendance links.
 - Read-only attendance linked to each lesson. Existing records without an explicit attendance state are labelled **Recorded in ALL_ATT**; the app does not infer presence or absence from notes or financial fields. New bookings have pending attendance. Moving a group header preserves its child attendance times; editing an individual changes that row's authorized schedule cells, which may recalculate existing formulas.
 - Manual checklist text, teacher combinations and Unassigned lessons. Conflicting and uncertain saves keep the draft; uncertain saves offer a safe retry.
+- DateRegistry metadata supplies weekday/parity information, holiday names and academic terms. Explicitly closed school days receive calendar cues and editor context; weekends and holiday names alone do not close a day. These labels do not block scheduling or mark attendance.
 - **Refresh data** preserves an open lesson draft. In demo mode, **Reset demo** restores the sample schedule and **Fail the next save** tests failure recovery.
 
 The school timezone is **Asia/Vladivostok**, regardless of the browser's timezone. In `ALL_ATT`, an empty student reference means a group lesson header; a student with empty `group2` means an individual lesson in the same row; a student with a group means attendance only. An individual lesson therefore needs one row, while a six-student group lesson needs one header and six attendance rows.
 
-Demo changes last only in the current tab's memory. Connected changes remain after reload. Deleted lessons can be restored by changing `ALL_ATT.Calendar_Status` to `scheduled` or `cancelled`; there is no in-app undo yet. Recurring series, teacher sign-in, production permissions and deployment remain future work; the current server is a local development connection using a service account. It still loads full history; large-document performance has not been established.
+Demo changes last only in the current tab's memory. Connected changes remain after reload. Deleted lessons can be restored by changing `ALL_ATT.Calendar_Status` to `scheduled` or `cancelled`; there is no in-app undo yet. Recurring series, teacher sign-in, production permissions and deployment remain future work; the current server is a local development connection using a service account. It still loads full history plus one projected registry read per snapshot; large-document performance has not been established. See [current state](docs/STATE.md) for live and browser verification rather than assuming automated tests establish either.
 
 ## Project notes
 

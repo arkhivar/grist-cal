@@ -51,7 +51,22 @@ With explicit user approval, Calendar_UID was converted to a Text data column wi
 
 Two disposable live API probes verified generation of an omitted UUID, stability after ordinary edits, preservation of a calendar-supplied UUID and return of the same row on a repeated create. The initial interrupted probe create was checked by readback before proceeding; it had produced no record. Both probes were removed after identity checks. Read-only schema validation accepts the repaired definition; the final preparation preview proposes zero headers or links, reuses both legacy copies and reports zero conflicts. The snapshot retains 2,817 lessons and 3,208 attendance entries.
 
-The local validator now narrowly accepts supported new-record-only Calendar_UID defaults, with tests rejecting regular formulas and unsafe trigger settings. [COLUMNS.md](../COLUMNS.md) records current column roles, this repair and a proposed shared DateRegistry. The date registry remains a design proposal; no date table, links or formatting migration was implemented. There were no new browser interaction checks for this change.
+The local validator now narrowly accepts supported new-record-only Calendar_UID defaults, with tests rejecting regular formulas and unsafe trigger settings. [COLUMNS.md](../COLUMNS.md) records current column roles and this repair. DateRegistry was still a proposal at that point; its subsequent implementation is recorded below. There were no new browser interaction checks for the UUID change.
+
+### Shared DateRegistry — 2026-10-15
+
+Added eight fields to the user's empty DateRegistry and formula references in ALL_ATT and Transactions. Populated 3,653 unique calendar dates from 2020-01-01 through 2029-12-31. Existing A/B/C columns, all prior column definitions and all original input values remained unchanged. School-day policy, holidays and terms are initially unspecified; weekends are not assumed closed.
+
+- Live formulas linked all 3,765 dated ALL_ATT rows and all 2,004 Transactions rows to their correct Asia/Vladivostok date. Five undated ALL_ATT rows remain unlinked. Registry date/short-weekday values match the existing helpers; transaction Date values were compared using their tagged representation.
+- All 3,653 day/month parity values match arithmetic from the fixed January 2026 anchor. No registry formula errors or duplicate/invalid dates were found. Repeating population produced zero writes.
+- One disposable group lesson and three temporary date rows verified automatic date linkage, a move across school midnight, preserved identity, unchanged lesson revision after metadata edits, and a successful save using the original version after that metadata edit. Explicit closed-day metadata did not block saving.
+- Temporarily duplicating the probe date cleared its derived reference and metadata join without hiding the lesson. Removing the probe date also left the lesson visible. The temporary lesson and date rows were removed only after checking their identities against the baseline.
+- Original input preservation was checked across all 3,770 ALL_ATT rows and 2,004 Transactions rows, with zero changes including automatic timestamps. All preexisting definitions in those tables and DateRegistry remained identical.
+- The final snapshot retains 2,817 lessons and 3,208 attendance entries, with 3,653 available dates and zero unmatched lesson dates. Registry metadata is read once per snapshot, separate from save preflight/readback and lesson revisions.
+
+Calendar UI support includes explicit closed-day shading/labels, holiday and term context, mini-calendar descriptions and editor date context. Metadata refresh preserves the current draft. Editing school metadata currently happens in Grist. The connected local server was started with the updated adapter; `/api/config` and `/api/snapshot` returned HTTP 200 in Grist mode, with the final counts above and no connection credentials in the snapshot. **Interactive browser verification remains pending** because local browser access was previously rejected under the tool's URL policy; no alternate route was attempted.
+
+The cleanup plan identifies date, day and hasDate as three gross ALL_ATT candidates, offset by one new reference column. The existing date field still supplies a conditional rule and the Calendar_Parent display helper. No helper or formatting definition was changed or deleted. Full consumer review and practical validation come before cleanup. This registry adds useful shared metadata; no large-document speedup or 50k/100k benchmark is claimed.
 
 ### Historical separate-table adapter
 
@@ -73,7 +88,7 @@ The new action menus were exercised in the demo browser, including keyboard oper
 
 ## Automated and browser checks
 
-`node scripts/check.mjs` passes JavaScript syntax checks, all **19 vendored-file hashes** and **158 automated tests**. Coverage includes the new ALL_ATT classification, additive preparation/resume, schema preservation, safe UUID defaults, pending bookings, reference identity, narrow schedule writes, timezone conversion, scalar conditional writes, uncertain responses, draft preservation, deletion failures/retries and concurrency, local HTTP boundaries and the retained legacy adapter.
+`node scripts/check.mjs` passes JavaScript syntax checks, all **19 vendored-file hashes** and **187 automated tests**. Coverage includes ALL_ATT classification, additive preparation/resume, schema preservation, safe UUID defaults, pending bookings, reference identity, narrow schedule writes, timezone conversion, scalar conditional writes, uncertain responses, draft preservation, deletion failures/retries and concurrency, local HTTP boundaries and the retained legacy adapter. DateRegistry coverage includes bounded/idempotent population, lost responses, concurrent duplicates, preservation of manual metadata, timezone links, safe missing-data fallback and text-only accessible UI context.
 
 The earlier demo passed interactive desktop and 390px phone-width checks for dragging, resizing, selection creation, failure recovery, teacher filters/search, navigation, cancellation, checklist round-trip, draft refresh, dirty-close confirmation and focus recovery. See the browser log for the individual runs. These checks are interactive, not an automated end-to-end suite. Physical touch devices, other browser engines and browser timezone emulation remain separate verification work.
 

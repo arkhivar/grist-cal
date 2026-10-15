@@ -74,7 +74,7 @@ The 13 added columns are:
 
 Exact types and the revision formula are defined in [`server/all-att-schema.mjs`](../server/all-att-schema.mjs). Setup validates the existing `start`/`end` timezone, reference types and editability; it retains existing trigger formulas. True formula columns cannot accept scheduling edits, so an incompatible source definition stops setup.
 
-Calendar_UID may be a plain Text data column or use a new-record-only default of `UUID()` or `value or UUID()`, with no record-change dependencies. Explicitly supplied calendar/preparation IDs must remain stored unchanged. A regular formula column or a change-trigger configuration is rejected. Setup preserves the accepted existing definition and does not convert columns automatically. See [COLUMNS.md](../COLUMNS.md) for the identity decision and the proposed shared date registry.
+Calendar_UID may be a plain Text data column or use a new-record-only default of `UUID()` or `value or UUID()`, with no record-change dependencies. Explicitly supplied calendar/preparation IDs must remain stored unchanged. A regular formula column or a change-trigger configuration is rejected. Setup preserves the accepted existing definition and does not convert columns automatically. See [COLUMNS.md](../COLUMNS.md) for identity decisions and the shared date registry.
 
 The former `Calendar_Lessons` table, `ALL_ATT.Calendar_Lesson` links and legacy revision fields remain intact. The active adapter does not use them. Removing or consolidating redundant fields is a later decision after practical validation.
 
@@ -104,6 +104,45 @@ $gristConfigJson | node scripts/grist-setup.mjs --grist-stdin --prepare-all-att 
 The optional flag can also be used without `--prepare-all-att` to preview that additional work. It copies only old `Calendar_Lessons` rows whose `Origin` is `calendar`, with deterministic identities so reruns reuse them. They become group headers with no student attendance and retain their scheduling text and cancellation/deletion state. The old records remain untouched. Historical attendance imports are not replayed, and edits that exist only on those historical imported lesson rows are not copied over the current `ALL_ATT` schedule.
 
 The former `--import-attendance` CLI option is rejected. The old importer and schema modules are retained as legacy code and tests, not as the active setup path. Historical live results are recorded in [STATE.md](STATE.md); they do not prove this transition or its current counts.
+
+## Prepare the shared date registry
+
+DateRegistry stores one row per calendar day, shared by attendance and optional transaction references. Its setup is separate from lesson preparation:
+
+```powershell
+$gristConfigJson | node scripts/date-registry-setup.mjs --grist-stdin --from 2020-01-01 --through 2029-12-31 --include-transactions
+```
+
+This command **adds missing schema and previews the date range**. It does not populate date rows until `--populate` is added:
+
+```powershell
+$gristConfigJson | node scripts/date-registry-setup.mjs --grist-stdin --from 2020-01-01 --through 2029-12-31 --include-transactions --populate
+```
+
+The initial range is inclusive and contains **3,653 days**, now populated and verified in the development sandbox. To extend coverage, repeat the population command with the desired inclusive dates; existing rows and their manual metadata remain intact. Live execution and browser verification are recorded in [STATE.md](STATE.md) and [BROWSER_CHECKS.md](BROWSER_CHECKS.md).
+
+The registry contains:
+
+| Column | Behavior |
+| --- | --- |
+| `Date` | Stored calendar date, one row per day |
+| `Day` | Formula returning a short weekday such as `Thu` |
+| `Day_Parity` | Formula alternating 0/1 by elapsed days from 2026-01-01, which is 0 |
+| `Month_Parity` | Formula alternating 0/1 by elapsed months from January 2026, which is 0 |
+| `Is_Weekend` | Formula identifying Saturday/Sunday; it does not determine school closure |
+| `School_Day` | Manually maintained `Unspecified`, `Teaching day` or `Closed` policy |
+| `Holiday_Name` | Manually maintained holiday text |
+| `Academic_Term` | Manually maintained term text |
+
+The additive setup also creates formula references named `Calendar_Date`: `ALL_ATT.Calendar_Date` derives its date from `ALL_ATT.start`; with `--include-transactions`, `Transactions.Calendar_Date` derives from `Transactions.datetime`. DateTime sources are converted explicitly to the **Asia/Vladivostok** calendar date before lookup. A Date source is used directly. A missing or ambiguous registry date yields an empty reference rather than an arbitrary match. The original timestamp remains canonical and is never replaced by the reference.
+
+Population inserts missing dates in batches, keyed by `Date`, and leaves existing dates and their manual school policy, holiday names and terms untouched. It verifies the requested coverage and can be rerun after partial completion or uncertain responses. Invalid ranges are rejected before schema changes. Duplicate or invalid existing registry dates stop population for review; they are not overwritten. Exact definitions are in [`server/date-registry.mjs`](../server/date-registry.mjs).
+
+Existing day, parity and month helper columns remain in place with their definitions and values intact. This setup does not rewrite those helpers or change salary/transaction formulas to use the registry. Any later consolidation is tracked separately in [COLUMNS.md](../COLUMNS.md).
+
+The calendar reads projected registry metadata once per snapshot and attaches metadata by the lesson's canonical school date. Explicit `School_Day=Closed` values produce calendar cues and editor context. Weekend flags and holiday labels do not infer closure, prevent a save, cancel a lesson or mark attendance. School policy and holiday/term editing currently happen in Grist.
+
+Missing or duplicate registry dates do not hide valid lessons. Snapshot metadata reports aggregate coverage/duplicate warnings; a failed registry read leaves the schedule usable and marks the registry unavailable. The derived `Calendar_Date` reference and registry metadata are excluded from lesson versions, save validation and readback, so a moved lesson's recalculated reference or a changed holiday label does not cause a false save conflict. Server startup never creates registry rows or schema.
 
 ## Start the connected calendar
 
@@ -144,6 +183,6 @@ New lessons have a stable client-generated UUID. Each edit has a mutation ID. Ma
 
 Delete uses the same revision check. A failed or stale delete leaves the event visible. A retry with the same delete mutation ID can confirm a deletion that already succeeded; a different stale mutation is rejected. Saving an old editor draft cannot restore a deleted lesson.
 
-The current adapter still loads the complete projected `ALL_ATT` history, together with names from `PERFORMANCE` and `FOLKS`; saves also perform full projected readback. Reducing row duplication does not establish large-document performance. Date-range loading, targeted readback and realistic isolated 50k/100k measurements remain future work.
+The current adapter still loads the complete projected `ALL_ATT` history, together with names from `PERFORMANCE` and `FOLKS`, plus one projected `DateRegistry` read per snapshot. Saves still perform full projected attendance readback, but do not reread the registry during preflight or readback. Reducing row duplication or sharing date helpers does not establish large-document performance. Date-range loading, targeted readback and realistic isolated 50k/100k measurements remain future work.
 
-Run `node scripts/check.mjs` for the automated checks. The new store has 20 focused tests for writes, identity, concurrency and recovery. Live sandbox results are in [STATE.md](STATE.md), and browser interaction evidence is maintained separately in [BROWSER_CHECKS.md](BROWSER_CHECKS.md). Mocked tests or previous adapter browser checks are not evidence of current live behavior.
+Run `node scripts/check.mjs` for the automated checks. The store has 25 focused tests for writes, identity, concurrency, recovery and registry integration, including timezone-boundary moves and unavailable/duplicate date metadata. Live sandbox results are in [STATE.md](STATE.md), and browser interaction evidence is maintained separately in [BROWSER_CHECKS.md](BROWSER_CHECKS.md). Mocked tests or previous adapter browser checks are not evidence of current live behavior.

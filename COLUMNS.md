@@ -17,7 +17,8 @@ Existing column definitions and input values are protected unless the user expli
 | `start`, `end` | Canonical lesson times; DateTime in Asia/Vladivostok. The app exchanges UTC ISO instants and Grist stores epoch seconds. Calendar edits may update these cells. | Accepted; retain existing definitions, including the end trigger. |
 | `t` | Canonical teacher reference list. Preserve missing/multiple references. Calendar edits may change the teacher. | Accepted. |
 | `student`, `group2` | Classify rows and identify students/groups. Existing references are read-only in the editor; new individual lessons select exactly one student and no group. | Accepted. |
-| `Calendar_Parent` | Ref:ALL_ATT from a group attendance row to its particular group lesson header. Individual attendance belongs to its own row. | Accepted; keep even if a date registry is added. |
+| `Calendar_Parent` | Ref:ALL_ATT from a group attendance row to its particular group lesson header. Individual attendance belongs to its own row. | Accepted; the day registry does not replace this lesson link. |
+| `Calendar_Date` | Formula Ref:DateRegistry derived from this row's own `start` in Asia/Vladivostok. Empty if the timestamp or unique matching date is missing. | Implemented; Grist recalculates it, the calendar never writes it directly. |
 | `Calendar_UID` | Stored creation/retry identity. The app supplies an ID before creating a row, so retrying a lost response finds that same row. Preparation also uses deterministic IDs. | Accepted shared identifier column; new rows entered directly in Grist may receive a UUID default. See the identity decision below. |
 | `Calendar_Revision` | Formula fingerprint of protected scheduling, reference and calendar fields. Atomic saves compare it to detect concurrent changes, including direct Grist edits. | Implemented; retain this protection. A stable UUID cannot replace a revision. |
 | `Calendar_Mutation` | Identifies a particular save/delete operation so its retry can recognize an already completed write. | Implemented; retain separately from permanent identity. |
@@ -50,42 +51,47 @@ The schema validator now accepts the narrow safe default configuration while sti
 
 Grist recommends generating UUIDs in a new-record trigger to freeze the value; regular formulas can regenerate on recalculation. [UUID reference](https://support.getgrist.com/functions/#uuid). Trigger formulas distinguish new-record defaults from record-change behavior. [Trigger documentation](https://support.getgrist.com/formulas/#trigger-formulas).
 
-## DateRegistry — proposed, not implemented
+## DateRegistry — implemented 2026-10-15
 
-A shared table with one row per school calendar date is a useful candidate for school-wide day metadata. It complements lesson/attendance relationships and does not restore the former separate lesson table.
+The user created the empty table and authorized its additive setup. It now contains **3,653 dates, 2020-01-01 through 2029-12-31 inclusive**, covering current attendance and transaction history with future scheduling space. The existing empty A/B/C columns remain unchanged. Populate or extend a range explicitly with `scripts/date-registry-setup.mjs`; normal server startup never changes schema or creates date rows. See [GRIST.md](docs/GRIST.md) for commands.
 
-| Proposed field | Meaning |
+| Field | Owner and meaning |
 | --- | --- |
-| `DateRegistry.Date` | Date-only key, exactly one row per day within a defined continuous range. Uniqueness must be checked; duplicates must not be resolved by arbitrarily choosing a row. |
-| `DateRegistry.Day_Parity` | Calendar-day alternation derived from an agreed fixed date anchor, if this is the intended formatting rule. |
-| `DateRegistry.Month_Parity` | Alternation derived from the calendar month/year and a fixed anchor. |
-| `DateRegistry.Is_Weekend` | Day-of-week fact; not necessarily a school closure. |
-| `DateRegistry.Holiday_Name`, `Is_School_Day`, `Academic_Term` | Shared school-specific metadata that can support calendar shading, labels and scheduling checks later. |
-| `ALL_ATT.Calendar_Date` | Optional new Ref:DateRegistry, preferably derived from that row's own start time converted to Asia/Vladivostok. |
-| `Transactions.Calendar_Date` | Optional reference derived from the agreed business/payment date. Its source column has not been selected or audited. |
+| `DateRegistry.Date` | Stored Date; one row per calendar day. Population inserts only missing dates. Duplicate dates require review; neither formulas nor the app choose an arbitrary match. |
+| `DateRegistry.Day` | Formula returning Mon/Tue/Wed/Thu/Fri/Sat/Sun, matching the existing short weekday helpers. |
+| `DateRegistry.Day_Parity` | Formula counting days from 2026-01-01, modulo two; the anchor has value 0. |
+| `DateRegistry.Month_Parity` | Formula counting months from January 2026, modulo two; the anchor month has value 0. |
+| `DateRegistry.Is_Weekend` | Formula identifying Saturday/Sunday. This fact never determines school closure. |
+| `DateRegistry.School_Day` | Manual Choice: Unspecified, Teaching day, Closed. Blank also means unspecified. No school week or holiday policy was invented. |
+| `DateRegistry.Holiday_Name` | Manual Text; optional holiday label. |
+| `DateRegistry.Academic_Term` | Manual Text; optional term label. |
+| `ALL_ATT.Calendar_Date` | Formula Ref:DateRegistry, derived from that row's own `start` in Asia/Vladivostok. |
+| `Transactions.Calendar_Date` | Formula Ref:DateRegistry, derived from `datetime` in Asia/Vladivostok, matching the existing transaction date helper's source. |
 
-Final table/column names, covered years, parity semantics and school-week rules are still open decisions. No DateRegistry table or date-reference columns have been created by this work.
+DateTime formulas explicitly convert to the school timezone, then use an indexed exact-date lookup and accept only one match. Missing timestamps, absent registry dates and duplicate dates yield an empty reference. The formula does not create missing dates. A manually entered date outside the prepared range needs explicit registry extension; it does not prevent calendar scheduling.
 
-### A day link and a lesson link answer different questions
+### Calendar behavior and relationship rules
 
-Several lessons can occur on the same day. Calendar_Date would identify that day; Calendar_Parent identifies the specific lesson attended. Both links can coexist. For example, two lessons on October 15 can share a date row while retaining separate attendance lists and separate lesson headers.
+Calendar_Date identifies a day; Calendar_Parent identifies a particular lesson. Several lessons can share a day while retaining separate attendance lists. `start`/`end` remain canonical and preserve time-of-day. Moving a group header changes its own derived day, while its children retain their original timestamps, date links and parent links. A report needing the parent's current scheduled day must follow the parent separately. Individual lessons follow their own start edit.
 
-Keep start/end canonical and preserve time-of-day. Derive a day using Asia/Vladivostok explicitly: 2026-10-14T23:30Z belongs to October 15 at school. Blank or invalid timestamps remain unlinked and need an explicit missing-date state. A start-day reference alone does not describe both days of an overnight lesson.
+The app reads the registry once per snapshot and joins metadata by the lesson's canonical school date. It does not require the derived reference in its save projection. Explicit closed dates receive subtle shading and text cues; holidays and terms appear in date context and the editor. Edit these manual fields in Grist, then use Refresh. Labels are informational: they do not block saves, cancel lessons or mark attendance. A start-day reference describes only the starting date; editor context also covers subsequent days of an overnight lesson, excluding an end exactly at midnight.
 
-Moving a group header would update its own date link. Child attendance retains its original source date and Calendar_Parent link. A report that needs the parent's current scheduled day can derive it separately. An individual lesson's date follows its own authorized start edit. Prefer a derived reference that tracks timestamp changes over a manually maintained second source of truth. Prepopulate the agreed date range, detect missing dates and extend it explicitly; a lookup alone does not create absent date rows.
+Missing, duplicate or unreadable registry metadata never hides a valid lesson. Snapshot metadata reports aggregate coverage/ambiguity; this is not yet a user-facing maintenance dashboard. Date metadata and Calendar_Date are excluded from lesson revisions, so changing a term label does not invalidate an open scheduling draft. Demo behavior is unchanged without registry metadata.
 
-Grist supports reference-valued lookups and reading fields through a reference. [References and lookups](https://support.getgrist.com/references-lookups/). Exact formulas must be verified against the chosen source date types and timezone before implementation.
+### Concrete ALL_ATT cleanup candidates — not deleted
 
-### Decide what parity means before migrating formatting
+| Existing field | Replacement after migration | Work required before deletion |
+| --- | --- | --- |
+| `date` | `$Calendar_Date.Date` | Existing conditional formatting uses `$date`, and the Calendar_Parent display helper reads `$Calendar_Parent.date`. Migrate these consumers, audit views/filters and other widgets, and check range coverage before removal. |
+| `day` | `$Calendar_Date.Day` | Migrate column displays, exports, filters and any external consumers to the reference value; verify out-of-range handling. |
+| `hasDate` | Inline `bool($start)` wherever the existence check is needed | Audit its consumers. Do not substitute `bool($Calendar_Date)`: an out-of-range timestamp has a date but no registry link. |
 
-Calendar-day parity and alternating distinct dates that happen to contain records are different rules. Monday and Wednesday have the same calendar-day parity, but would alternate if they were the only occupied dates. Filtering records can also change which dates are adjacent in a view. A fixed date registry does not guarantee alternating colors for every filtered list of occupied dates.
+These are **three gross removal candidates**, with one added Calendar_Date column: two fewer ALL_ATT columns overall if all three are eventually retired. This delivery creates the replacement path and verifies values; it does not delete or redefine any existing helper. New Calendar_Date values match all 3,765 valid ALL_ATT source dates and their short weekdays. All 2,004 transaction dates/weekday values also match (Transactions.date uses Grist's tagged Date representation). Formula inspection found the two concrete ALL_ATT.date dependencies above; UI settings and external integrations still require a full cleanup audit. Transactions.date/day are separate future candidates under the same rules.
 
-For fixed calendar-day parity, a formula such as `($Date - datetime.date(2026, 1, 1)).days % 2` (with `import datetime`) uses an explicit anchor and does not depend on attendance rows, date-row IDs, insertion order or table scans. Month parity can similarly use the month distance from an agreed anchor. These cheap date calculations can also be done directly on source rows without any registry. If the goal is only fixed striping, a new table is optional.
+### Parity semantics and performance limits
 
-School week A/B is another distinct policy: its start anchor, holiday handling and whether it pauses or resets must be agreed. Do not assume ISO week-number parity implements that policy. Current/past-month flags are time-dependent and need a refresh rule; they are not permanently precomputed facts.
+The implemented parity is fixed **calendar-day/month alternation**, independent of row IDs, deletion, insertion order or operational table scans. It is not alternating occupied dates: Monday and Wednesday have the same parity even when Tuesday has no records. Existing conditional formatting was not migrated. School week A/B and time-dependent flags such as current month remain separate policy decisions.
 
-### Performance expectations
+Sharing day metadata makes holiday/term maintenance useful to the calendar and provides consolidation opportunities. No existing expensive parity formula was replaced or benchmarked, so this delivery does not establish a speedup. Each source row still has a reference formula; the registry adds 3,653 rows. The adapter still reads full projected attendance history. Date-range loading, targeted readback and realistic 50k/100k measurements remain pending.
 
-Replacing repeated whole-table distinct-date scans with direct date arithmetic or references should reduce that particular source of work, but the exact existing parity formulas have not been audited or benchmarked. Centralizing shared holidays and term definitions is a stronger reason for this table than computing simple parity.
-
-Five years adds roughly 1,826 date rows, plus links/formulas on operational rows. Total work still depends on operational row count, dependencies and changes. The registry does not fix the calendar adapter's current full-history reads, nor does it establish 50k/100k performance. Measure representative formula recalculation and calendar loading separately before claiming a speedup.
+Live checks verified formula execution, zero-write repeat population, date-link changes across school midnight, metadata changes without revision conflicts, and safe missing/duplicate-date fallback. Temporary probes were removed after identity checks. All original input values and column definitions in ALL_ATT, Transactions and the initially empty registry remain unchanged. See [STATE.md](docs/STATE.md) for verification evidence and the outstanding browser check.

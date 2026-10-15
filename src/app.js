@@ -1,6 +1,7 @@
 import { SCHOOL_TIME_ZONE, schoolToday, schoolInput, fromSchoolInput, formatSchoolTime, shiftDate, startOfWeek, selectCalendarLessons } from './domain.js';
 import { createMemoryStore } from './memory-store.js';
 import { createGristStore, readCalendarConfig } from './grist-store.js';
+import { createDateContextIndex, dateContextFor, lessonDateDescription, setDateContextText, appendDateContextLabel } from './date-context.js';
 
 const $ = (id) => document.getElementById(id);
 const escape = (value = '') => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -59,6 +60,8 @@ async function start() {
   $('connection-message').textContent = isLive ? 'Loading lessons and linked attendance from Grist…' : 'Preparing your fictional school schedule…';
   const store = isLive ? await createGristStore({ csrfToken: config.csrfToken }) : createMemoryStore({ anchorDate, delayMs: 450 });
   let snapshot = store.getSnapshot();
+  let dateContexts = createDateContextIndex(snapshot.calendarDates);
+  let dateContextVersion = JSON.stringify(snapshot.calendarDates || []);
   let selectedTeachers = new Set(snapshot.teachers.map(t => t.id));
   let includeNewTeachers = true;
   let focusedDate = requestedDate || anchorDate;
@@ -185,9 +188,10 @@ async function start() {
     const selectedWeek = startOfWeek(focusedDate);
     $('mini-calendar').innerHTML = ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map(day => `<span class="mini-weekday" aria-hidden="true">${day}</span>`).join('') + Array.from({ length: 42 }, (_, i) => {
       const date = shiftDate(firstCell, i);
-      const classes = ['mini-day', date.slice(0, 7) !== miniMonth ? 'outside' : '', date === anchorDate ? 'is-today' : '', date === focusedDate ? 'is-selected' : '', date >= selectedWeek && date < shiftDate(selectedWeek, 7) ? 'in-week' : ''].filter(Boolean).join(' ');
-      const label = dayName.format(new Date(`${date}T12:00:00Z`));
-      return `<button type="button" class="${classes}" data-date="${date}" aria-label="${escape(label)}" ${date === focusedDate ? 'aria-pressed="true"' : 'aria-pressed="false"'} ${date === anchorDate ? 'aria-current="date"' : ''}>${Number(date.slice(8))}</button>`;
+      const context = dateContextFor(dateContexts, date);
+      const classes = ['mini-day', date.slice(0, 7) !== miniMonth ? 'outside' : '', date === anchorDate ? 'is-today' : '', date === focusedDate ? 'is-selected' : '', date >= selectedWeek && date < shiftDate(selectedWeek, 7) ? 'in-week' : '', context?.closed ? 'is-school-closed' : ''].filter(Boolean).join(' ');
+      const label = `${dayName.format(new Date(`${date}T12:00:00Z`))}${context ? ` · ${context.description}` : ''}`;
+      return `<button type="button" class="${classes}" data-date="${date}" aria-label="${escape(label)}" ${context ? `title="${escape(context.description)}"` : ''} ${date === focusedDate ? 'aria-pressed="true"' : 'aria-pressed="false"'} ${date === anchorDate ? 'aria-current="date"' : ''}>${Number(date.slice(8))}</button>`;
     }).join('');
   }
 
@@ -281,6 +285,10 @@ async function start() {
 
   function isDirty() { return editor && JSON.stringify(rawDraft()) !== editor.initial; }
 
+  function renderEditorDateContext() {
+    setDateContextText($('lesson-date-context'), lessonDateDescription(dateContexts, $('lesson-start').value, $('lesson-end').value));
+  }
+
   function closeEditor() {
     closeLessonMenu();
     $('lesson-dialog').close();
@@ -347,6 +355,7 @@ async function start() {
     }
     renderAttendance(existing?.id);
     editor = { id: existing?.id, clientId: crypto.randomUUID(), version: existing?.version, initial: JSON.stringify(rawDraft()) };
+    renderEditorDateContext();
     syncLessonIdentity();
     closeMobileSidebar();
     $('lesson-dialog').showModal();
@@ -548,6 +557,41 @@ async function start() {
     } finally { setBusy(false); }
   }
 
+  function dateRenderHooks() {
+    return {
+      dayCellClassNames(info) {
+        return dateContextFor(dateContexts, info.date)?.closed ? ['is-school-closed'] : [];
+      },
+      dayHeaderClassNames(info) {
+        // Month headers describe recurring weekdays, not specific school dates.
+        return info.view.type !== 'dayGridMonth' && dateContextFor(dateContexts, info.date)?.closed ? ['is-school-closed'] : [];
+      },
+      dayHeaderContent(info) {
+        const date = schoolToday(info.date);
+        const weekday = new Intl.DateTimeFormat('en-GB', { timeZone: SCHOOL_TIME_ZONE, weekday: 'short' }).format(info.date);
+        const wrap = document.createElement('div');
+        wrap.className = 'day-heading';
+        const word = document.createElement('span'); word.className = 'day-name'; word.textContent = weekday;
+        wrap.append(word);
+        if (info.view.type !== 'dayGridMonth') {
+          const number = document.createElement('span'); number.className = 'day-number'; number.textContent = Number(date.slice(8)); wrap.append(number);
+          appendDateContextLabel(wrap, dateContextFor(dateContexts, date));
+        }
+        return { domNodes: [wrap] };
+      },
+      dayCellContent(info) {
+        const context = dateContextFor(dateContexts, info.date);
+        // FullCalendar v6 supports true to retain its default day-number rendering.
+        if (info.view.type !== 'dayGridMonth' || !context) return true;
+        const wrap = document.createElement('span'); wrap.className = 'date-registry-month-date';
+        const number = document.createElement('span'); number.textContent = info.dayNumberText;
+        wrap.append(number);
+        appendDateContextLabel(wrap, context);
+        return { domNodes: [wrap] };
+      },
+    };
+  }
+
   calendar = new FullCalendar.Calendar($('calendar'), {
     initialView: mobile.matches ? 'timeGridDay' : 'timeGridWeek',
     initialDate: focusedDate,
@@ -568,18 +612,7 @@ async function start() {
     longPressDelay: 350, eventLongPressDelay: 350, selectLongPressDelay: 350,
     handleWindowResize: true,
     events: eventData(),
-    dayHeaderContent(info) {
-      const date = schoolToday(info.date);
-      const weekday = new Intl.DateTimeFormat('en-GB', { timeZone: SCHOOL_TIME_ZONE, weekday: 'short' }).format(info.date);
-      const wrap = document.createElement('div');
-      wrap.className = 'day-heading';
-      const word = document.createElement('span'); word.className = 'day-name'; word.textContent = weekday;
-      wrap.append(word);
-      if (info.view.type !== 'dayGridMonth') {
-        const number = document.createElement('span'); number.className = 'day-number'; number.textContent = Number(date.slice(8)); wrap.append(number);
-      }
-      return { domNodes: [wrap] };
-    },
+    ...dateRenderHooks(),
     datesSet(info) {
       closeLessonMenu();
       closeTeacherMenu(true);
@@ -640,6 +673,17 @@ async function start() {
 
   function acceptSnapshot(next) {
     snapshot = next;
+    const nextDateVersion = JSON.stringify(snapshot.calendarDates || []);
+    if (nextDateVersion !== dateContextVersion) {
+      dateContextVersion = nextDateVersion;
+      dateContexts = createDateContextIndex(snapshot.calendarDates);
+      // New hook identities make v6 rerender both cell classes and custom date content.
+      calendar.batchRendering(() => {
+        for (const [option, value] of Object.entries(dateRenderHooks())) calendar.setOption(option, value);
+      });
+      renderMini();
+    }
+    if (editor) renderEditorDateContext();
     selectedTeachers = new Set(snapshot.teachers.filter(teacher => includeNewTeachers || selectedTeachers.has(teacher.id)).map(teacher => teacher.id));
     renderTeachers();
     if (editor?.id && !editorSaving) {
@@ -727,6 +771,8 @@ async function start() {
   mobile.addEventListener('change', syncSidebar);
   $('lesson-form').addEventListener('submit', saveEditor);
   $('lesson-kind').addEventListener('change', syncLessonIdentity);
+  $('lesson-start').addEventListener('input', renderEditorDateContext);
+  $('lesson-end').addEventListener('input', renderEditorDateContext);
   $('close-editor').addEventListener('click', requestCloseEditor);
   $('cancel-editor').addEventListener('click', requestCloseEditor);
   $('lesson-dialog').addEventListener('cancel', event => { event.preventDefault(); void requestCloseEditor(); });
