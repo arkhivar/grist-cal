@@ -22,15 +22,23 @@ Existing column definitions and input values are protected unless the user expli
 | `Calendar_UID` | Stored creation/retry identity. The app supplies an ID before creating a row, so retrying a lost response finds that same row. Preparation also uses deterministic IDs. | Accepted shared identifier column; new rows entered directly in Grist may receive a UUID default. See the identity decision below. |
 | `Calendar_Revision` | Formula fingerprint of protected scheduling, reference and calendar fields. Atomic saves compare it to detect concurrent changes, including direct Grist edits. | Implemented; retain this protection. A stable UUID cannot replace a revision. |
 | `Calendar_Mutation` | Identifies a particular save/delete operation so its retry can recognize an already completed write. | Implemented; retain separately from permanent identity. |
-| `Calendar_Source_Revision` | Concurrency helper used by the former attendance importer. | Primary retirement candidate; unused by the active calendar/default preparation. Remove before Calendar_Lesson because its formula reads that link. |
-| `Calendar_Lesson` | Former reference from attendance to Calendar_Lessons. | Primary retirement candidate; retain until the old-to-current lesson crosswalk and archival/reconciliation are complete. |
+| `Calendar_Source_Revision` | Concurrency helper used by the former attendance importer. | Removal recommended after the user's table deletion; unused by the active calendar/default preparation. Remove first because its formula still reads Calendar_Lesson. |
+| `Calendar_Lesson` | Former reference to the deleted Calendar_Lessons table; Grist converted it to Int, retaining old row numbers. | Removal recommended after Calendar_Source_Revision. No current lesson/attendance relationship uses these integers. |
 | `Calendar_Status` | Scheduled, cancelled or deleted. Soft deletion preserves the row and attendance links. | Implemented; delete writes this and Calendar_Mutation only. |
 | `Calendar_Attendance` | Separates bookings from recorded attendance. New bookings are pending; existing blank values are shown neutrally as recorded. | Implemented; attendance remains read-only in the calendar. |
 | `Calendar_Origin` | Identifies calendar-created rows, prepared group headers and copied legacy lessons. | Implemented; used in safe preparation/recovery. |
 | `Calendar_Title`, `Calendar_Group_Label`, `Calendar_Room`, `Calendar_Participants`, `Calendar_Checklist`, `Calendar_Notes` | Calendar-specific display text, location, participant notes and manual checklist. The group label is separate from group references; calendar notes are separate from original attendance notes. | Implemented; discuss individual consolidation candidates before merging. |
 | Original `notes`, financial inputs and formula definitions | Existing attendance and parallel salaries functionality. | Preserve; do not infer attendance from payments or notes. |
 
-The former `Calendar_Lessons` table is retained and unused by the active adapter. The obsolete standalone `UUID` column was removed by the user on 2026-10-15; the selected shared column is `Calendar_UID`.
+The user deleted `Calendar_Lessons` on 2026-10-15; a fresh API read confirms it is absent. The obsolete standalone `UUID` column was also removed by the user; the selected shared identifier column is `Calendar_UID`.
+
+### Check after the user's table deletion — 2026-10-15
+
+Both obsolete ALL_ATT columns remain. Calendar_Lesson is now Int with 3,211 nonempty old IDs; Calendar_Source_Revision still refers to `$Calendar_Lesson.id`. Across all 18 remaining tables, the only formula mentioning either obsolete column is Calendar_Source_Revision itself. Neither is used by the active adapter, revision formula or default setup. **Recommended manual cleanup: delete Calendar_Source_Revision, then Calendar_Lesson.** No live columns were deleted or changed by this check.
+
+Keep all other Calendar_* columns: 13 base fields are required by the current adapter, and Calendar_Date serves the shared date registry. Calendar_Parent continues to link attendance to current ALL_ATT lessons and must remain. The fresh live snapshot succeeds with 2,817 lessons, 3,209 attendance entries and an available date registry; all active revision values are valid hashes. ALL_ATT currently contains 3,771 rows. These are current observed counts, not a claim that no user edits occurred since the previous audit.
+
+The optional `--include-legacy-calendar` path still targets the deleted table and should no longer be used. Normal startup/default setup do not use it. The audit and proposed sequence below describe the state **before the user deleted the table**, including differences then identified; they do not assert that archival/reconciliation was completed.
 
 ## Calendar-created schema — retirement audit 2026-10-15
 
@@ -44,7 +52,7 @@ The active adapter's read/write projection and current revision formula omit bot
 
 Explicit `--include-legacy-calendar` still reads the old table; retire this optional migration path when dropping it. The old importer/store/schema remain historical code. Do not delete `grist-model.mjs` blindly: the current model imports its `refs()` helper. Source cleanup must extract that shared helper or retain the library.
 
-### Live audit findings
+### Live audit findings before table deletion
 
 - Calendar_Lessons contains **2,733 rows: 2,731 attendance imports and two standalone calendar lessons**. Each standalone lesson has exactly one deterministic ALL_ATT copy; all mapped scheduling/display fields match.
 - Every imported lesson has retained source attendance links resolving to current lessons: 2,685 have one target; 46 have multiple targets under the changed grouping model. No linked source row lacks a resolvable target. A blind one-to-one migration would be incorrect.
@@ -53,7 +61,7 @@ Explicit `--include-legacy-calendar` still reads the old table; retire this opti
 - Across 19 tables and 192 column definitions, the only direct typed reference to the old table is Calendar_Lesson; the only matching formula is Calendar_Source_Revision reading that link. No table summary or explicit matching ACL rule was found.
 - Each obsolete ALL_ATT field appears in six view-section field entries. The old table has three sections, including one user-page section; its Teacher display helper is internal. No matching saved-filter, sort or section-link dependency was found in inspected metadata. Views need cleanup; external widgets/scripts and dynamic references still require review.
 
-### Prepared removal sequence
+### Proposed removal sequence before table deletion
 
 1. Preserve a recoverable copy of the old table and attendance-link crosswalk outside the repository. No school-data backup was created or committed by this audit.
 2. Resolve the marked scheduling difference; decide whether other differences need migration or archival. Recheck both standalone copies and external consumers while the old links remain available.
