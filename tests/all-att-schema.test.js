@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ALL_ATT_COLUMNS, ALL_ATT_REVISION_FORMULA, ensureAllAttSchema } from '../server/all-att-schema.mjs';
-import { ALL_ATT_FIELDS } from '../server/all-att-model.mjs';
+import { ALL_ATT_COLUMNS, ALL_ATT_REVISION_FORMULA, ALL_ATT_HELPER_COLUMNS, ALL_ATT_HELPER_FIELDS,
+  DURATION_MINUTES_COLUMN, DURATION_MINUTES_FORMULA, ensureAllAttSchema } from '../server/all-att-schema.mjs';
+import { ALL_ATT_FIELDS, lessonVersion } from '../server/all-att-model.mjs';
 
 const sourceColumns = () => [
   ['start', 'DateTime:Asia/Vladivostok'], ['end', 'DateTime:Asia/Vladivostok'], ['t', 'RefList:PERFORMANCE'],
@@ -10,12 +11,14 @@ const sourceColumns = () => [
 
 function clientFor(columns) {
   const calls = [];
+  const storedColumns = structuredClone(columns);
   return { calls, async request(method, endpoint, body) {
     calls.push({ method, endpoint, body });
-    if (method === 'GET') return { columns };
+    if (method === 'GET') return { columns: storedColumns };
     assert.equal(method, 'POST');
     assert.equal(endpoint, '/tables/ALL_ATT/columns');
-    assert.ok(body.columns.every(column => column.id.startsWith('Calendar_')));
+    assert.ok(body.columns.every(column => column.id.startsWith('Calendar_') || ALL_ATT_HELPER_FIELDS.includes(column.id)));
+    storedColumns.push(...structuredClone(body.columns));
     return {};
   } };
 }
@@ -27,15 +30,15 @@ test('ALL_ATT setup adds only new columns and leaves source/end trigger formulas
   const result = await ensureAllAttSchema(client);
   assert.equal(result.lessonTable, 'ALL_ATT');
   assert.equal(result.attendanceLink, 'Calendar_Parent');
-  assert.equal(result.addedColumnCount, ALL_ATT_COLUMNS.length);
+  assert.equal(result.addedColumnCount, ALL_ATT_COLUMNS.length + ALL_ATT_HELPER_COLUMNS.length);
   assert.equal(client.calls.length, 2);
-  assert.deepEqual(client.calls[1].body.columns, ALL_ATT_COLUMNS);
+  assert.deepEqual(client.calls[1].body.columns, [...ALL_ATT_COLUMNS, ...ALL_ATT_HELPER_COLUMNS]);
   assert.deepEqual(existing, before);
   assert.equal(ALL_ATT_COLUMNS.find(column => column.id === 'Calendar_Parent').fields.type, 'Ref:ALL_ATT');
 });
 
 test('ALL_ATT schema setup is idempotent and does not alter unrelated legacy columns', async () => {
-  const client = clientFor([...sourceColumns(), ...structuredClone(ALL_ATT_COLUMNS),
+  const client = clientFor([...sourceColumns(), ...structuredClone(ALL_ATT_COLUMNS), ...structuredClone(ALL_ATT_HELPER_COLUMNS),
     { id: 'Calendar_Lesson', fields: { type: 'Ref:Calendar_Lessons', isFormula: false } },
     { id: 'Calendar_Source_Revision', fields: { type: 'Text', isFormula: true, formula: 'legacy formula' } }]);
   const result = await ensureAllAttSchema(client);
@@ -46,7 +49,7 @@ test('ALL_ATT schema setup is idempotent and does not alter unrelated legacy col
 test('Calendar_UID accepts only a preserved data-column UUID default for new records', async () => {
   for (const formula of ['UUID()', 'value or UUID()', '  UUID()\n']) {
     for (const recalcDeps of [null, ['L']]) {
-      const columns = [...sourceColumns(), ...structuredClone(ALL_ATT_COLUMNS)];
+      const columns = [...sourceColumns(), ...structuredClone(ALL_ATT_COLUMNS), ...structuredClone(ALL_ATT_HELPER_COLUMNS)];
       Object.assign(columns.find(column => column.id === 'Calendar_UID').fields,
         { formula, recalcWhen: 0, recalcDeps });
       const before = structuredClone(columns);
@@ -64,8 +67,8 @@ test('an accepted Calendar_UID default is preserved when other calendar columns 
   } }];
   const before = structuredClone(columns);
   const client = clientFor(columns);
-  assert.equal((await ensureAllAttSchema(client)).addedColumnCount, ALL_ATT_COLUMNS.length - 1);
-  assert.deepEqual(client.calls[1].body.columns, ALL_ATT_COLUMNS.filter(column => column.id !== 'Calendar_UID'));
+  assert.equal((await ensureAllAttSchema(client)).addedColumnCount, ALL_ATT_COLUMNS.length + ALL_ATT_HELPER_COLUMNS.length - 1);
+  assert.deepEqual(client.calls[1].body.columns, [...ALL_ATT_COLUMNS.filter(column => column.id !== 'Calendar_UID'), ...ALL_ATT_HELPER_COLUMNS]);
   assert.deepEqual(columns, before);
   assert.deepEqual(ALL_ATT_COLUMNS.find(column => column.id === 'Calendar_UID').fields,
     { type: 'Text', isFormula: false }, 'Default schema remains an ordinary writable data column');
@@ -132,4 +135,57 @@ test('scalar CAS revision covers every projected field except itself, including 
   assert.match(ALL_ATT_REVISION_FORMULA, /sha256/);
   assert.match(ALL_ATT_REVISION_FORMULA, /tuple\(\$student\.id\)/);
   assert.match(ALL_ATT_REVISION_FORMULA, /\$Calendar_Parent\.id/);
+});
+
+test('duration helper alone is added to an existing calendar schema without touching source triggers or UUID defaults', async () => {
+  const columns = [...sourceColumns(), ...structuredClone(ALL_ATT_COLUMNS)];
+  Object.assign(columns.find(column => column.id === 'Calendar_UID').fields,
+    { formula: 'value or UUID()', recalcWhen: 0, recalcDeps: null });
+  const before = structuredClone(columns);
+  const client = clientFor(columns);
+  assert.equal((await ensureAllAttSchema(client)).addedColumnCount, 1);
+  assert.deepEqual(client.calls[1].body.columns, [DURATION_MINUTES_COLUMN]);
+  assert.deepEqual(columns, before);
+  assert.equal(columns.find(column => column.id === 'end').fields.formula, '$start + 3600');
+  assert.equal((await ensureAllAttSchema(client)).addedColumnCount, 0);
+  assert.equal(client.calls.filter(call => call.method === 'POST').length, 1, 'Repeated setup must not rewrite the helper or other columns');
+});
+
+test('duration formula uses elapsed UTC minutes and rejects missing, invalid or nonpositive intervals', () => {
+  assert.equal(DURATION_MINUTES_COLUMN.id, 'Duration_Minutes');
+  assert.equal(DURATION_MINUTES_COLUMN.fields.type, 'Numeric');
+  assert.equal(DURATION_MINUTES_COLUMN.fields.isFormula, true);
+  assert.equal(DURATION_MINUTES_COLUMN.fields.formula, DURATION_MINUTES_FORMULA);
+  assert.match(DURATION_MINUTES_FORMULA, /isinstance\(start_at, datetime.datetime\)/);
+  assert.match(DURATION_MINUTES_FORMULA, /isinstance\(end_at, datetime.datetime\)/);
+  assert.match(DURATION_MINUTES_FORMULA, /start_at.tzinfo is None or end_at.tzinfo is None/);
+  assert.match(DURATION_MINUTES_FORMULA, /end_at\.astimezone\(datetime.timezone.utc\) - start_at\.astimezone\(datetime.timezone.utc\)/);
+  assert.match(DURATION_MINUTES_FORMULA, /\.total_seconds\(\)/);
+  assert.match(DURATION_MINUTES_FORMULA, /return elapsed \/ 60 if elapsed > 0 else None/);
+  assert.doesNotMatch(DURATION_MINUTES_FORMULA, /round\(|int\(|Calendar_Parent|datetime\.timedelta/);
+});
+
+test('unsafe existing duration definitions fail before any schema additions', async () => {
+  for (const patch of [
+    { type: 'Text' }, { type: 'Int' }, { isFormula: false }, { formula: '($end - $start).seconds / 60' },
+    { formula: '60' }, { formula: '' },
+  ]) {
+    const columns = [...sourceColumns(), { id: 'Duration_Minutes', fields: { ...DURATION_MINUTES_COLUMN.fields, ...patch } }];
+    const before = structuredClone(columns);
+    const client = clientFor(columns);
+    await assert.rejects(ensureAllAttSchema(client), /calendar schema mismatch: Duration_Minutes/);
+    assert.equal(client.calls.length, 1, 'Base calendar columns must not be partially added before discovering a helper mismatch');
+    assert.deepEqual(columns, before);
+  }
+});
+
+test('derived duration stays outside the 13 base columns, source projection and concurrency revision', () => {
+  assert.equal(ALL_ATT_COLUMNS.length, 13);
+  assert.deepEqual(ALL_ATT_HELPER_FIELDS, ['Duration_Minutes']);
+  assert.ok(!ALL_ATT_COLUMNS.some(column => column.id === 'Duration_Minutes'));
+  assert.ok(!ALL_ATT_FIELDS.includes('Duration_Minutes'));
+  assert.doesNotMatch(ALL_ATT_REVISION_FORMULA, /Duration_Minutes/);
+  const source = { start: 1791864000, end: 1791867600, t: ['L', 17], student: ['L'], group2: ['L', 31] };
+  assert.equal(lessonVersion(source), lessonVersion({ ...source, Duration_Minutes: 60 }));
+  assert.equal(lessonVersion(source), lessonVersion({ ...source, Duration_Minutes: null }));
 });

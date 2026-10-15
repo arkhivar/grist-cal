@@ -110,3 +110,15 @@ Expected browser checks, not observations:
 - Demo mode retains its existing appearance and behavior without registry data.
 
 Separate live API checks verified 3,653 registry dates, correct source links for all dated attendance/transaction rows, unchanged lesson revision after metadata changes, date-link movement across school midnight, and lesson visibility with missing/duplicate registry dates. All temporary probes were removed. Original inputs and definitions were unchanged. These checks establish live data behavior, not browser rendering; see [STATE.md](STATE.md).
+
+## Duration controls — 2026-10-15
+
+Interactive browser verification remains pending under the existing local-preview URL restriction. No alternate browser route was used. Ten controller tests cover the three presets, custom lengths, start/end transitions, invalid input, timezone/midnight/leap/year boundaries and failed-save recovery. Four schema tests cover additive duration setup and preservation of existing definitions/revisions. Separate live Grist API checks verified the duration formula on all current rows and on a disposable lesson saved at 40, 60, 80 and 75 minutes; all original inputs/definitions/revisions were unchanged after cleanup.
+
+Expected browser checks, not observations:
+
+- Open a new lesson: 60 minutes is selected. Each preset changes End correctly; a late-night start crosses to the next school date.
+- Existing/duplicated/drag-selected custom lengths display Custom with their minute count. Changing Start retains that length; editing End updates the selector without snapping.
+- Selecting Custom focuses End. Keyboard navigation reaches the labelled selector; its hint describes automatic end changes. Check desktop and 390px dialog layout and scrolling.
+- Refresh and a simulated failed save retain all unsaved times and the displayed duration. Saving disables the duration selector with the other inputs.
+- Perform an actual pointer resize, reopen the lesson and confirm its resulting custom duration and Grist Duration_Minutes. Controller/API tests do not establish drag geometry.

@@ -2,6 +2,7 @@ import { SCHOOL_TIME_ZONE, schoolToday, schoolInput, fromSchoolInput, formatScho
 import { createMemoryStore } from './memory-store.js';
 import { createGristStore, readCalendarConfig } from './grist-store.js';
 import { createDateContextIndex, dateContextFor, lessonDateDescription, setDateContextText, appendDateContextLabel } from './date-context.js';
+import { createDurationController } from './duration.js';
 
 const $ = (id) => document.getElementById(id);
 const escape = (value = '') => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -71,6 +72,7 @@ async function start() {
   let calendar;
   let busy = false;
   let editor = null;
+  let durationController = null;
   let editorSaving = false;
   let refreshing = false;
   let toastTimer;
@@ -289,10 +291,40 @@ async function start() {
     setDateContextText($('lesson-date-context'), lessonDateDescription(dateContexts, $('lesson-start').value, $('lesson-end').value));
   }
 
+  function renderDuration(state = durationController?.getState()) {
+    if (!state) return;
+    $('lesson-duration-custom').textContent = state.customLabel;
+    $('lesson-duration').value = state.selection;
+  }
+
+  function changeLessonStart() {
+    if (busy || !durationController) return;
+    const state = durationController.changeStart($('lesson-start').value);
+    if ($('lesson-end').value !== state.end) $('lesson-end').value = state.end;
+    renderDuration(state);
+    renderEditorDateContext();
+  }
+
+  function changeLessonEnd() {
+    if (busy || !durationController) return;
+    renderDuration(durationController.changeEnd($('lesson-end').value));
+    renderEditorDateContext();
+  }
+
+  function changeLessonDuration() {
+    if (busy || !durationController) return;
+    const state = durationController.selectDuration($('lesson-duration').value);
+    if ($('lesson-end').value !== state.end) $('lesson-end').value = state.end;
+    renderDuration(state);
+    renderEditorDateContext();
+    if (state.selection === 'custom') $('lesson-end').focus();
+  }
+
   function closeEditor() {
     closeLessonMenu();
     $('lesson-dialog').close();
     editor = null;
+    durationController = null;
     if (editorOpener?.isConnected && !editorOpener.closest('[inert]') && editorOpener.getClientRects().length) editorOpener.focus({ preventScroll: true });
     else $('sidebar-toggle').focus({ preventScroll: true });
   }
@@ -347,6 +379,8 @@ async function start() {
     for (const input of $('lesson-form').querySelectorAll('[name]')) {
       input.value = ['start', 'end'].includes(input.name) ? schoolInput(lesson[input.name]) : lesson[input.name] || '';
     }
+    durationController = createDurationController($('lesson-start').value, $('lesson-end').value);
+    renderDuration();
     $('form-error').hidden = true;
     $('draft-notice').hidden = true;
     if (duplicate) {
@@ -771,8 +805,9 @@ async function start() {
   mobile.addEventListener('change', syncSidebar);
   $('lesson-form').addEventListener('submit', saveEditor);
   $('lesson-kind').addEventListener('change', syncLessonIdentity);
-  $('lesson-start').addEventListener('input', renderEditorDateContext);
-  $('lesson-end').addEventListener('input', renderEditorDateContext);
+  $('lesson-start').addEventListener('input', changeLessonStart);
+  $('lesson-end').addEventListener('input', changeLessonEnd);
+  $('lesson-duration').addEventListener('change', changeLessonDuration);
   $('close-editor').addEventListener('click', requestCloseEditor);
   $('cancel-editor').addEventListener('click', requestCloseEditor);
   $('lesson-dialog').addEventListener('cancel', event => { event.preventDefault(); void requestCloseEditor(); });

@@ -14,6 +14,15 @@ ALL_ATT_COLUMNS.push({ id: 'Calendar_Revision', fields: {
   type: 'Text', isFormula: true, formula: ALL_ATT_REVISION_FORMULA,
 } });
 
+// Display/reporting helper only: duration derives from the canonical timestamps
+// and never participates in save writes, projected source fields or revisions.
+export const DURATION_MINUTES_FORMULA = 'import datetime\nstart_at = $start\nend_at = $end\nif not isinstance(start_at, datetime.datetime) or not isinstance(end_at, datetime.datetime):\n  return None\nif start_at.tzinfo is None or end_at.tzinfo is None:\n  return None\ntry:\n  elapsed = (end_at.astimezone(datetime.timezone.utc) - start_at.astimezone(datetime.timezone.utc)).total_seconds()\nexcept (TypeError, ValueError, OverflowError):\n  return None\nreturn elapsed / 60 if elapsed > 0 else None';
+export const DURATION_MINUTES_COLUMN = { id: 'Duration_Minutes', fields: {
+  type: 'Numeric', isFormula: true, formula: DURATION_MINUTES_FORMULA,
+} };
+export const ALL_ATT_HELPER_COLUMNS = [DURATION_MINUTES_COLUMN];
+export const ALL_ATT_HELPER_FIELDS = Object.freeze(ALL_ATT_HELPER_COLUMNS.map(column => column.id));
+
 const SOURCE_COLUMNS = [
   ['start', 'DateTime:Asia/Vladivostok'], ['end', 'DateTime:Asia/Vladivostok'],
   ['t', 'RefList:PERFORMANCE'], ['student', 'RefList:FOLKS'], ['group2', 'RefList:PERFORMANCE'], ['notes', 'Text'],
@@ -29,7 +38,7 @@ function isUidDefault(columnId, fields) {
     fields.recalcWhen === 0 && emptyDependencies && ['UUID()', 'value or UUID()'].includes(formula);
 }
 
-/** Explicit setup validates everything first and only adds missing Calendar_* columns. */
+/** Explicit setup validates everything first and only adds missing calendar/helper columns. */
 export async function ensureAllAttSchema(client) {
   const current = await client.request('GET', `/tables/${ALL_ATT_TABLE}/columns`);
   const byId = new Map(current.columns.map(column => [column.id, column.fields]));
@@ -45,7 +54,7 @@ export async function ensureAllAttSchema(client) {
     }
   }
   const missing = [];
-  for (const column of ALL_ATT_COLUMNS) {
+  for (const column of [...ALL_ATT_COLUMNS, ...ALL_ATT_HELPER_COLUMNS]) {
     const existing = byId.get(column.id);
     if (!existing) missing.push(column);
     else if (existing.type !== column.fields.type || Boolean(existing.isFormula) !== column.fields.isFormula

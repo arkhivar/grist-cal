@@ -54,7 +54,7 @@ $gristConfigJson | node scripts/grist-setup.mjs --grist-stdin
 
 This command **adds missing calendar columns**, validates existing definitions and previews aggregate preparation counts. It does not create headers or link attendance without `--prepare-all-att`. It never deletes existing columns or changes an incompatible existing definition; a mismatch stops setup.
 
-The 13 added columns are:
+The 13 base columns are:
 
 | Column | Purpose |
 | --- | --- |
@@ -72,11 +72,13 @@ The 13 added columns are:
 | `Calendar_Attendance` | Attendance state; pending bookings do not imply attendance |
 | `Calendar_Revision` | Formula revision covering schedule, classification and calendar fields |
 
+Setup also adds `Duration_Minutes`, a read-only Numeric formula helper calculated from each row's start/end. It reports elapsed minutes after converting both timestamps to UTC, preserves fractional minutes and stays blank for missing/invalid/nonpositive intervals. Existing column definitions are never rewritten. The helper is not included in scheduling writes or concurrency revisions.
+
 Exact types and the revision formula are defined in [`server/all-att-schema.mjs`](../server/all-att-schema.mjs). Setup validates the existing `start`/`end` timezone, reference types and editability; it retains existing trigger formulas. True formula columns cannot accept scheduling edits, so an incompatible source definition stops setup.
 
 Calendar_UID may be a plain Text data column or use a new-record-only default of `UUID()` or `value or UUID()`, with no record-change dependencies. Explicitly supplied calendar/preparation IDs must remain stored unchanged. A regular formula column or a change-trigger configuration is rejected. Setup preserves the accepted existing definition and does not convert columns automatically. See [COLUMNS.md](../COLUMNS.md) for identity decisions and the shared date registry.
 
-The former `Calendar_Lessons` table, `ALL_ATT.Calendar_Lesson` links and legacy revision fields remain intact. The active adapter does not use them. Removing or consolidating redundant fields is a later decision after practical validation.
+The user removed the former `Calendar_Lessons` table and ALL_ATT.Calendar_Lesson/Calendar_Source_Revision fields from the development sandbox. The active adapter and default setup work without them and do not recreate them. The optional legacy-copy commands below are historical migration capabilities for documents that still have that table; do not use them against this sandbox.
 
 ## Prepare group headers and links explicitly
 
@@ -160,6 +162,8 @@ Remove-Variable gristConfigJson, gristCredential, gristSecret
 The server binds only to `127.0.0.1`. It validates local hosts, same-origin requests and a per-process write token. These controls support local use; they do not provide teacher authentication or per-user Grist permissions.
 
 ## What is saved
+
+The editor offers **40, 60 and 80 minutes**, plus Custom. Choosing a preset updates End; changing Start keeps the current valid duration. Editing End directly updates the duration display without rounding. Custom focuses End for manual adjustment. Existing/duplicate/selected-range lessons retain their current minute length, and new click-created lessons default to 60 minutes. The save still sends start/end; Duration_Minutes follows them automatically in Grist. Direct start-only edits in Grist retain a nonempty end because its existing fallback trigger remains unchanged.
 
 Create, edit, move, resize and cancel operations save narrow scheduling fields in `ALL_ATT`. A changed time or teacher writes the existing `start`, `end` or `t` cell. Other calendar edits use the new calendar columns. Original `datetime`, `per`, `notes`, financial inputs and formula definitions are not directly rewritten by this adapter. Existing formulas and triggers can recalculate after source cells change; this is particularly relevant for an individual lesson sharing its attendance row. The integration does not promise unchanged computed wages or timestamps.
 
