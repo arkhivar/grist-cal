@@ -11,7 +11,7 @@ const start = Date.parse('2026-10-12T23:00:00Z') / 1000;
 const row = (id, extra = {}) => {
   const fields = {
     start, end: start + 3600, t: ['L', 17], group2: ['L', 31], student: ['L', id],
-    Calendar_UID: '', Calendar_Parent: 0, Calendar_Status: '', Calendar_Origin: '', Calendar_Attendance: '',
+    Calendar_UID: '', Calendar_Parent: 0, Calendar_Status: '', Calendar_Attendance: '',
     notes: 'Private existing note', datetime: start - 900, per: ['L', 18], wage: 900, count: 1,
     Calendar_Lesson: 700 + id, ...extra,
   };
@@ -42,6 +42,7 @@ function mockClient({ attendance = [row(1), row(2)], beforeWrite, afterWrite, be
   const client = {
     async records(table, fields) {
       assert.ok(['ALL_ATT', 'Calendar_Lessons'].includes(table), 'Preparation never reads unrelated tables.');
+      if (table === 'ALL_ATT') assert.ok(!fields.includes('Calendar_Origin'), 'Removed origin column is not projected.');
       reads.push({ table, fields: [...fields] });
       await beforeRead?.({ tables, reads, writes });
       recalculate();
@@ -58,6 +59,7 @@ function mockClient({ attendance = [row(1), row(2)], beforeWrite, afterWrite, be
       const result = { recordIds: [], addRecordIds: [], updateRecordIds: [] };
       for (const operation of body.records) {
         assert.ok(!Object.hasOwn(operation.fields, 'end'), 'Formula end must never be written.');
+        assert.ok(!Object.hasOwn(operation.fields, 'Calendar_Origin'), 'Removed origin column must never be written.');
         assert.ok(Object.values(operation.require).every(value => !Array.isArray(value)), 'RefLists cannot be CAS lookup predicates.');
         const matches = tables.ALL_ATT.filter(record => Object.entries(operation.require)
           .every(([field, value]) => same(field === 'id' ? record.id : record.fields[field], value)));
@@ -144,7 +146,8 @@ test('preparation creates one header and changes only new parent links on preexi
   assert.equal(result.linkedRowCount, 2);
   assert.equal(mock.tables.ALL_ATT.length, 3);
   const header = mock.tables.ALL_ATT[2];
-  assert.equal(header.fields.Calendar_Origin, 'all-att-group-header');
+  assert.match(header.fields.Calendar_UID, /^all-att-group:[a-f0-9]{64}$/);
+  assert.ok(!Object.hasOwn(header.fields, 'Calendar_Origin'));
   assert.equal(header.fields.Calendar_Attendance, 'pending');
   assert.equal(header.fields.Duration_Minutes, 60);
   assert.equal(header.fields.end, start + 3600);
@@ -329,7 +332,7 @@ test('optional legacy preparation preserves standalone scheduling metadata and i
   assert.equal(mock.tables.ALL_ATT.length, 1);
   const copied = mock.tables.ALL_ATT[0];
   assert.equal(copied.fields.Calendar_UID, 'legacy-calendar:701');
-  assert.equal(copied.fields.Calendar_Origin, 'calendar-legacy');
+  assert.ok(!Object.hasOwn(copied.fields, 'Calendar_Origin'));
   assert.equal(copied.fields.Calendar_Attendance, 'pending');
   assert.equal(copied.fields.Calendar_Status, 'cancelled');
   assert.equal(copied.fields.Calendar_Title, 'Standalone lesson');
@@ -422,7 +425,7 @@ test('fractional durations are copied without rounding and derived-end readback 
   assert.equal(mock.tables.ALL_ATT[0].fields.Duration_Minutes, source.fields.Duration_Minutes);
 
   for (const offset of [0.000001, 0.01]) {
-    const checked = mockClient({ deriveEnd: fields => derivedEnd(fields) + (fields.Calendar_Origin === 'all-att-group-header' ? offset : 0) });
+    const checked = mockClient({ deriveEnd: fields => derivedEnd(fields) + (/^all-att-group:[a-f0-9]{64}$/.test(fields.Calendar_UID) ? offset : 0) });
     const checkedResult = await prepareAllAtt({ client: checked.client });
     assert.equal(checkedResult.status, offset < 0.000002 ? 'complete' : 'partial');
     assert.equal(checkedResult.linkedRowCount, offset < 0.000002 ? 2 : 0);

@@ -15,7 +15,7 @@ const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const networkFailure = () => Object.assign(new Error('Sensitive upstream details'), { mayHaveMutated: true });
 const blankCalendar = () => ({ Calendar_UID: '', Calendar_Title: '', Calendar_Group_Label: '', Calendar_Room: '',
   Calendar_Participants: '', Calendar_Checklist: '', Calendar_Status: '', Calendar_Notes: '',
-  Calendar_Mutation: '', Calendar_Origin: '', Calendar_Parent: 0, Calendar_Attendance: '' });
+  Calendar_Mutation: '', Calendar_Parent: 0, Calendar_Attendance: '' });
 function initialTables() {
   const fields = { ...blankCalendar(),
     start: Date.parse('2026-10-13T00:00:00Z') / 1000, Duration_Minutes: 60,
@@ -23,7 +23,7 @@ function initialTables() {
     t: ['L', 17], student: ['L'], group2: ['L', 40], notes: 'Untouched original notes',
     Calendar_UID: UID, Calendar_Title: 'Lesson A', Calendar_Group_Label: 'Group A', Calendar_Room: 'Room 2',
     Calendar_Checklist: '1/3', Calendar_Status: 'scheduled', Calendar_Notes: 'Calendar notes',
-    Calendar_Mutation: ORIGINAL_MUTATION, Calendar_Origin: 'existing',
+    Calendar_Mutation: ORIGINAL_MUTATION,
     datetime: 1791864000, per: ['L', 18], wage: 750, payment: 1200, Unknown_Formula: 500, Calendar_Lesson: 9 };
   return {
     PERFORMANCE: [{ id: 17, fields: { A: 'Teacher One', type: 'team' } },
@@ -67,6 +67,7 @@ function mockClient({ beforeMutation, afterMutation, response, rejectMutation, f
   recalculate();
   return { tables, reads, writes,
     async records(table, fields) {
+      assert.ok(!fields.includes('Calendar_Origin'), 'The retired origin column must never be projected');
       recalculate();
       reads.push({ table, fields: [...fields] });
       if (table === 'DateRegistry' && failRegistry) throw new Error('Private registry URL and connection details');
@@ -89,6 +90,7 @@ function mockClient({ beforeMutation, afterMutation, response, rejectMutation, f
         assert.ok(Object.values(operation.require).every(value => !Array.isArray(value)), 'Grist lookup cannot hash RefLists');
         assert.ok(!Object.hasOwn(operation.fields, 'Calendar_Revision'), 'The revision is formula-only');
         assert.ok(!Object.hasOwn(operation.fields, 'end'), 'The calculated end must never be written');
+        assert.ok(!Object.hasOwn(operation.fields, 'Calendar_Origin'), 'The retired origin column must never be written');
         const found = tables.ALL_ATT.filter(record => Object.entries(operation.require)
           .every(([field, value]) => equal(field === 'id' ? record.id : record.fields[field], value)));
         if (found.length > 1) { recordIds.push([]); continue; }
@@ -229,10 +231,10 @@ test('registry fallback does not suppress errors reading the actual attendance s
   assert.equal(client.writes.length, 0);
 });
 
-test('snapshot, create, edit and delete work with the entire legacy lesson schema absent', async () => {
+test('snapshot, create, edit, retry and delete work with the origin column and legacy lesson schema absent', async () => {
   const client = mockClient();
   delete client.tables.Calendar_Lessons;
-  const legacyFields = ['Calendar_Lesson', 'Calendar_Source_Revision'];
+  const legacyFields = ['Calendar_Lesson', 'Calendar_Source_Revision', 'Calendar_Origin'];
   for (const row of client.tables.ALL_ATT) for (const field of legacyFields) delete row.fields[field];
   const originalRows = clone(client.tables.ALL_ATT);
   const read = client.records.bind(client);
@@ -257,13 +259,16 @@ test('snapshot, create, edit and delete work with the entire legacy lesson schem
   const initial = await store.getSnapshot();
   assert.equal(initial.lessons.length, 2);
   assert.ok(initial.attendance.some(record => record.lessonId === 'all-att:7'));
-  const created = await store.saveLesson({ ...freshDraft(), lessonKind: 'individual', studentIds: ['folks:31'] },
-    { mutationId: MUTATION });
+  const draft = { ...freshDraft(), lessonKind: 'individual', studentIds: ['folks:31'], Calendar_Origin: 'spoofed' };
+  const created = await store.saveLesson(draft, { mutationId: MUTATION });
+  assert.equal((await store.saveLesson(draft, { mutationId: MUTATION })).version, created.version);
   assert.equal(created.id, 'all-att:57');
   assert.equal((await store.getSnapshot()).lessons.length, 3);
-  const edited = await store.saveLesson({ ...created, title: 'Edited after retiring old schema', teacherId: 'per:18',
-    start: '2026-10-15T10:15:00+10:00', end: '2026-10-15T11:15:00+10:00' },
-  { expectedVersion: created.version, mutationId: OTHER_MUTATION });
+  const changes = { ...created, title: 'Edited after retiring old schema', teacherId: 'per:18',
+    start: '2026-10-15T10:15:00+10:00', end: '2026-10-15T11:15:00+10:00' };
+  const options = { expectedVersion: created.version, mutationId: OTHER_MUTATION };
+  const edited = await store.saveLesson(changes, options);
+  assert.equal((await store.saveLesson(changes, options)).version, edited.version);
   assert.equal(edited.start, '2026-10-15T00:15:00.000Z');
   assert.equal(edited.teacherId, 'per:18');
   const refreshed = await store.getSnapshot();
@@ -468,7 +473,7 @@ test('ALL_ATT creates one row for an individual booking with pending attendance 
   assert.deepEqual(client.tables.ALL_ATT[3].fields.group2, ['L']);
   assert.equal(client.tables.ALL_ATT[3].fields.Calendar_Attendance, 'pending');
   assert.equal(client.tables.ALL_ATT[3].fields.Calendar_Parent, 0);
-  assert.equal(client.tables.ALL_ATT[3].fields.Calendar_Origin, 'calendar');
+  assert.equal(Object.hasOwn(client.tables.ALL_ATT[3].fields, 'Calendar_Origin'), false);
   assert.equal(client.tables.ALL_ATT[3].fields.wage, undefined);
   assert.equal(client.tables.ALL_ATT[3].fields.datetime, undefined);
   assert.ok(!(await store.getSnapshot()).attendance.some(row => row.lessonId === saved.id));
@@ -615,16 +620,41 @@ test('ALL_ATT lost edit response retries resolve their mutation and preserve ori
   await assert.rejects(store.saveLesson({ ...draft, title: 'Reused save ID' }, options), { code: 'VERSION_CONFLICT' });
 });
 
-test('ALL_ATT prepared group headers remain visible during save readback with their child links', async () => {
+test('prepared group UID gates headers until a child is linked and survives save readback without origin', async () => {
   const client = mockClient();
-  client.tables.ALL_ATT[0].fields.Calendar_Origin = 'all-att-group-header';
+  const group = client.tables.ALL_ATT[0];
+  group.fields.Calendar_UID = `all-att-group:${createHash('sha256').update(JSON.stringify({ schema: 1,
+    start: group.fields.start, teachers: [17], groups: [40] })).digest('hex')}`;
+  client.tables.ALL_ATT[1].fields.Calendar_Parent = 0;
   const store = createAllAttStore({ client });
+  const pending = await store.getSnapshot();
+  assert.equal(pending.lessons.some(lesson => lesson.id === 'all-att:7'), false);
+  assert.equal(pending.meta.pendingImportLessonCount, 1);
+  client.tables.ALL_ATT[1].fields.Calendar_Parent = 7;
   const lesson = await groupLesson(store);
+  assert.ok(lesson);
   const saved = await store.saveLesson({ ...lesson, room: 'Changed room' },
     { expectedVersion: lesson.version, mutationId: MUTATION });
   assert.equal(saved.room, 'Changed room');
   assert.equal(saved.id, lesson.id);
   assert.equal(client.tables.ALL_ATT[1].fields.Calendar_Parent, 7);
+  assert.ok(client.tables.ALL_ATT.every(row => !Object.hasOwn(row.fields, 'Calendar_Origin')));
+});
+
+test('retained origin metadata cannot invalidate a draft or an idempotent retry', async () => {
+  const client = mockClient();
+  client.tables.ALL_ATT[0].fields.Calendar_Origin = 'existing';
+  const store = createAllAttStore({ client });
+  const lesson = await groupLesson(store);
+  delete client.tables.ALL_ATT[0].fields.Calendar_Origin;
+  const draft = { id: lesson.id, title: 'Origin-independent edit' };
+  const options = { expectedVersion: lesson.version, mutationId: MUTATION };
+  const saved = await store.saveLesson(draft, options);
+  client.tables.ALL_ATT[0].fields.Calendar_Origin = 'all-att-group-header';
+  assert.equal((await store.saveLesson(draft, options)).version, saved.version);
+  assert.equal(client.writes.length, 1);
+  assert.deepEqual(client.writes[0].body.records[0].fields,
+    { Calendar_Mutation: MUTATION, Calendar_Title: 'Origin-independent edit' });
 });
 
 test('ALL_ATT failures and missing readback remain explicit and preserve legacy records', async () => {

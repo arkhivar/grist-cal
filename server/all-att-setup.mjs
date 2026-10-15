@@ -131,7 +131,7 @@ export function buildAllAttPlan({ attendance = [], legacyLessons = [] } = {}) {
         Calendar_UID: existing ? fieldsOf(existing).Calendar_UID || '' : uid,
         start: first.start, Duration_Minutes: existing ? fieldsOf(existing).Duration_Minutes : (end - first.start) / 60,
         t: ['L', ...refs(first.t)], group2: ['L', ...refs(first.group2)], student: ['L'],
-        Calendar_Status: 'scheduled', Calendar_Origin: 'all-att-group-header', Calendar_Attendance: 'pending',
+        Calendar_Status: 'scheduled', Calendar_Attendance: 'pending',
       },
     });
   }
@@ -168,7 +168,7 @@ export function buildAllAttPlan({ attendance = [], legacyLessons = [] } = {}) {
       Calendar_Room: fields.Room || '', Calendar_Participants: fields.Participant_Notes || '',
       Calendar_Checklist: fields.Checklist || '', Calendar_Notes: fields.Notes || '',
       Calendar_Status: ['cancelled', 'deleted'].includes(fields.Status) ? fields.Status : 'scheduled',
-      Calendar_Origin: 'calendar-legacy', Calendar_Attendance: 'pending',
+      Calendar_Attendance: 'pending',
     };
     candidates.push({ key: sourceKey(copied), expectedEnd: fields.End, legacyLessonId: id, attendanceIds: [], fields: copied });
   }

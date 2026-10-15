@@ -27,7 +27,7 @@ Existing column definitions and input values are protected unless the user expli
 | `Calendar_Lesson` | Former reference to Calendar_Lessons, briefly converted to Int when that table was deleted. | Removed by the user on 2026-10-15; absence verified by API. Calendar_Parent remains the active lesson link. |
 | `Calendar_Status` | Scheduled, cancelled or deleted. Soft deletion preserves the row and attendance links. | Implemented; delete writes this and Calendar_Mutation only. |
 | `Calendar_Attendance` | Separates bookings from recorded attendance. New bookings are pending; existing blank values are shown neutrally as recorded. | Implemented; attendance remains read-only in the calendar. |
-| `Calendar_Origin` | Identifies calendar-created rows, prepared group headers and copied legacy lessons. | Implemented; used in safe preparation/recovery. |
+| `Calendar_Origin` | Former provenance marker; the preparation safeguard now uses the exact existing Calendar_UID pattern. | Removed with user authorization and live-verified 2026-10-16. No replacement column. |
 | `Calendar_Title`, `Calendar_Group_Label`, `Calendar_Room`, `Calendar_Participants`, `Calendar_Checklist`, `Calendar_Notes` | Calendar-specific display text, location, participant notes and manual checklist. The group label is separate from group references; calendar notes are separate from original attendance notes. | Implemented; discuss individual consolidation candidates before merging. |
 | Original `notes`, financial inputs and formula definitions | Existing attendance and parallel salaries functionality. | Preserve; do not infer attendance from payments or notes. |
 
@@ -37,7 +37,7 @@ The user deleted `Calendar_Lessons` on 2026-10-15; a fresh API read confirms it 
 
 At the first check, both obsolete ALL_ATT columns remained. Calendar_Lesson had become Int with 3,211 nonempty old IDs; Calendar_Source_Revision still referred to `$Calendar_Lesson.id` and was the only formula mentioning either obsolete field across the remaining tables. Removal was recommended in that order: source revision, then old link. **The user subsequently removed both columns; a fresh API read confirms their absence.** No live columns were deleted or changed by the assistant during these checks.
 
-Keep all other Calendar_* columns: 13 base fields are required by the current adapter, and Calendar_Date serves the shared date registry. Calendar_Parent continues to link attendance to current ALL_ATT lessons and must remain. The fresh live snapshot succeeds with 2,817 lessons, 3,209 attendance entries and an available date registry; all active revision values are valid hashes. ALL_ATT currently contains 3,771 rows. These are current observed counts, not a claim that no user edits occurred since the previous audit.
+At that historical check, the 13 base Calendar_* fields were still required; Calendar_Origin has a separate retirement decision below. Calendar_Date serves the shared date registry. Calendar_Parent continues to link attendance to current ALL_ATT lessons and must remain. That snapshot contained 2,817 lessons, 3,209 attendance entries and 3,771 ALL_ATT rows; all active revisions were valid hashes. These are observations from that check, not permanent counts.
 
 The optional `--include-legacy-calendar` path still targets the deleted table and should no longer be used. Normal startup/default setup do not use it. The audit and proposed sequence below describe the state **before the user deleted the table**, including differences then identified; they do not assert that archival/reconciliation was completed.
 
@@ -49,7 +49,13 @@ The migration freezes the existing calculated durations before changing End, pre
 
 Live migration preserved all 3,769 original rows: 3,764 valid start/end intervals and five wholly undated rows. All original stored inputs and duration values remained identical; only the three authorized definitions (duration, end, revision) changed. A separate synthetic table verified freezing values, fractional minutes and historical DST. Disposable ALL_ATT tests verified calendar creation, direct duration edits, stale-save rejection, duration-preserving moves, fractional resizing, metadata edits, retry and deletion. All fixtures were removed and original inputs compared again. See [STATE.md](docs/STATE.md).
 
-Calendar_Origin retirement is separately authorized; it remains required until the preparation safeguard, projection, write verification and revision dependencies are replaced and verified.
+### Calendar_Origin retirement — implemented 2026-10-16
+
+The live audit found 553 prepared-header markers and 3,216 blanks. Every marked row already has an exact `all-att-group:<64 lowercase hexadecimal characters>` UID; all 553 currently have attendance links. The model now uses that exact, case-sensitive pattern only for group headers to keep unlinked preparation rows hidden. Ordinary UUID, manual, legacy and malformed-prefix headers are not hidden by this safeguard. Existing preparation IDs remain unchanged.
+
+The active projection, revision formula, schema validator and create/preparation writes no longer require Calendar_Origin. Normalized origin metadata, where retained, is derived from existing deterministic IDs; it is not another stored field. The legacy separate-table adapter's Origin column is unrelated and remains untouched in historical code. The retirement audit found only the current revision formula and six view-field entries depending on this column, with no matching sort/filter, section link, typed column dependency or ACL rule. Live removal verification is recorded in [STATE.md](docs/STATE.md).
+
+The revision update and column removal were applied together with the local writer stopped. All 3,769 original rows retained every remaining field except the intentionally changed revision; unrelated definitions were identical. The six obsolete view-field entries were removed by Grist. The same 2,815 lessons and 3,209 attendance entries loaded afterward. Live create/edit/delete and exact-UID orphan hiding passed on one disposable row, which was removed. Setup added zero columns and did not recreate Origin.
 
 ### Historical duration helper — implemented 2026-10-15, superseded by the migration above
 
@@ -100,11 +106,11 @@ Explicit `--include-legacy-calendar` still reads the old table; retire this opti
 | --- | --- |
 | Calendar_UID, Calendar_Revision, Calendar_Mutation | Keep: creation/retry identity, concurrent-edit protection and operation retry identity serve separate purposes. |
 | Calendar_Parent, Calendar_Status, Calendar_Attendance | Keep: specific lesson links, cancellation/deletion state and pending-versus-recorded attendance. |
-| Calendar_Origin | Keep for now: it hides unlinked preparation headers and distinguishes origins for recovery. |
+| Calendar_Origin | Superseded decision: retirement authorized 2026-10-16, using existing deterministic UIDs for the preparation safeguard. |
 | Calendar_Title, Calendar_Group_Label, Calendar_Room, Calendar_Participants, Calendar_Checklist, Calendar_Notes | Future consolidation candidates, not direct deletions. Choose authoritative replacements, preserve content, and adapt the projection, editor/save mapping, setup validator and revision formula together. Freeform group labels differ from references; calendar notes are not automatically attendance notes. |
 | Calendar_Date | Keep for the shared date registry/reporting contract. It is derived and excluded from scheduling writes/revisions. |
 
-All 13 current base Calendar_* fields are required by today's adapter/schema/revision contract. Blank cells do not make their columns safe to drop; deliberate consolidation can reduce them after equivalent behavior is defined.
+This audit originally required all 13 base Calendar_* fields. Retiring Calendar_Origin reduces the active contract to 12. Blank cells alone do not make other columns safe to drop; deliberate consolidation requires equivalent behavior and dependency checks.
 
 ## Identity decision — 2026-10-15
 

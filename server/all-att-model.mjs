@@ -7,7 +7,7 @@ export const ALL_ATT_FIELDS = Object.freeze([
   'start', 'end', 'Duration_Minutes', 't', 'student', 'group2', 'notes',
   'Calendar_UID', 'Calendar_Title', 'Calendar_Group_Label', 'Calendar_Room',
   'Calendar_Participants', 'Calendar_Checklist', 'Calendar_Status', 'Calendar_Notes',
-  'Calendar_Mutation', 'Calendar_Origin', 'Calendar_Parent', 'Calendar_Attendance', 'Calendar_Revision',
+  'Calendar_Mutation', 'Calendar_Parent', 'Calendar_Attendance', 'Calendar_Revision',
 ]);
 
 const palette = ['#4285f4', '#18875b', '#8e63ce', '#d59116', '#c55778', '#268e9b', '#7464b5', '#a5703d'];
@@ -20,6 +20,10 @@ const lessonId = id => `all-att:${id}`;
 const teacherId = ids => ids.length ? `per:${ids.join(',')}` : 'unassigned';
 const studentName = (id, folks) => text(folks.get(id)?.name).trim() || `Student #${id}`;
 const groupName = (id, performance) => text(performance.get(id)?.A).trim() || `Group #${id}`;
+// The length check also excludes the trailing newline accepted by RegExp's $.
+const isPreparedGroupUid = value => typeof value === 'string' && value.length === 'all-att-group:'.length + 64 &&
+  /^all-att-group:[a-f0-9]{64}$/.test(value);
+const isLegacyCalendarUid = value => typeof value === 'string' && value === value.trim() && /^legacy-calendar:[1-9]\d*$/.test(value);
 
 /** These are the user's row rules; blank student references identify a group header. */
 export function classifyRow(record) {
@@ -115,7 +119,8 @@ export function normalizeAllAttSnapshot({ attendance = [], performance = [], fol
     }
     // Preparation creates headers before it conditionally links their source
     // rows. A partial preparation must not display an unrelated empty event.
-    if (lessonKind === 'group' && fields.Calendar_Origin === 'all-att-group-header' && !linkedHeaderIds.has(record.id)) {
+    const preparedGroup = lessonKind === 'group' && isPreparedGroupUid(fields.Calendar_UID);
+    if (preparedGroup && !linkedHeaderIds.has(record.id)) {
       pendingImportLessonCount += 1;
       continue;
     }
@@ -132,7 +137,8 @@ export function normalizeAllAttSnapshot({ attendance = [], performance = [], fol
       studentNames: students.map(id => studentName(id, folksById)), groupIds: groups.map(id => `per:${id}`),
       group, start, end, durationMinutes, room: text(fields.Calendar_Room), participantText: text(fields.Calendar_Participants),
       checklist: text(fields.Calendar_Checklist), status: fields.Calendar_Status === 'cancelled' ? 'cancelled' : 'scheduled',
-      notes: text(fields.Calendar_Notes), version: lessonVersion(fields), origin: text(fields.Calendar_Origin),
+      notes: text(fields.Calendar_Notes), version: lessonVersion(fields),
+      origin: preparedGroup ? 'all-att-group-header' : lessonKind === 'group' && isLegacyCalendarUid(fields.Calendar_UID) ? 'calendar-legacy' : '',
     });
   }
   normalizedLessons.sort((a, b) => a.start.localeCompare(b.start) || a.sourceRowId - b.sourceRowId);
@@ -183,7 +189,7 @@ export function normalizeAllAttSnapshot({ attendance = [], performance = [], fol
     teachers, students, groups, lessons: normalizedLessons, attendance: normalizedAttendance, groupHeaders,
     meta: {
       source: 'grist', model: 'all-att', lessonCount: normalizedLessons.length,
-      importedLessonCount: normalizedLessons.filter(lesson => ['attendance-import', 'all-att-group-header'].includes(lesson.origin)).length,
+      importedLessonCount: normalizedLessons.filter(lesson => lesson.origin === 'all-att-group-header').length,
       pendingImportLessonCount, deletedLessonCount, attendanceRowCount,
       linkedAttendanceRowCount: linkedRows, unlinkedAttendanceRowCount: attendanceRowCount - linkedRows,
       unlinkedAttendanceCount: attendanceRowCount - linkedRows, danglingAttendanceRowCount: danglingRows,

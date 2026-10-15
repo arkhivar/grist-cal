@@ -2,13 +2,13 @@ export const ALL_ATT_TABLE = 'ALL_ATT';
 
 // The source references are included so an external edit that changes a row's
 // classification invalidates an open calendar editor just like a schedule edit.
-export const ALL_ATT_REVISION_FORMULA = 'import hashlib\nreturn hashlib.sha256(repr(($start, $end, $Duration_Minutes, tuple($t.id) if $t else (), tuple($student.id) if $student else (), tuple($group2.id) if $group2 else (), $notes, $Calendar_UID, $Calendar_Title, $Calendar_Group_Label, $Calendar_Room, $Calendar_Participants, $Calendar_Checklist, $Calendar_Status, $Calendar_Notes, $Calendar_Mutation, $Calendar_Origin, $Calendar_Parent.id if $Calendar_Parent else 0, $Calendar_Attendance)).encode("utf-8")).hexdigest()';
+export const ALL_ATT_REVISION_FORMULA = 'import hashlib\nreturn hashlib.sha256(repr(($start, $end, $Duration_Minutes, tuple($t.id) if $t else (), tuple($student.id) if $student else (), tuple($group2.id) if $group2 else (), $notes, $Calendar_UID, $Calendar_Title, $Calendar_Group_Label, $Calendar_Room, $Calendar_Participants, $Calendar_Checklist, $Calendar_Status, $Calendar_Notes, $Calendar_Mutation, $Calendar_Parent.id if $Calendar_Parent else 0, $Calendar_Attendance)).encode("utf-8")).hexdigest()';
 
 export const ALL_ATT_COLUMNS = [
   ['Calendar_UID', 'Text'], ['Calendar_Title', 'Text'], ['Calendar_Group_Label', 'Text'],
   ['Calendar_Room', 'Text'], ['Calendar_Participants', 'Text'], ['Calendar_Checklist', 'Text'],
   ['Calendar_Status', 'Text'], ['Calendar_Notes', 'Text'], ['Calendar_Mutation', 'Text'],
-  ['Calendar_Origin', 'Text'], ['Calendar_Parent', 'Ref:ALL_ATT'], ['Calendar_Attendance', 'Text'],
+  ['Calendar_Parent', 'Ref:ALL_ATT'], ['Calendar_Attendance', 'Text'],
 ].map(([id, type]) => ({ id, fields: { type, isFormula: false } }));
 ALL_ATT_COLUMNS.push({ id: 'Calendar_Revision', fields: {
   type: 'Text', isFormula: true, formula: ALL_ATT_REVISION_FORMULA,

@@ -182,8 +182,8 @@ test('unsafe existing duration definitions fail before any schema additions', as
   }
 });
 
-test('stored duration joins the source projection and concurrency revision without changing the 13 calendar columns', () => {
-  assert.equal(ALL_ATT_COLUMNS.length, 13);
+test('stored duration joins the source projection and concurrency revision alongside the 12 calendar columns', () => {
+  assert.equal(ALL_ATT_COLUMNS.length, 12);
   assert.deepEqual(ALL_ATT_HELPER_FIELDS, ['Duration_Minutes']);
   assert.ok(!ALL_ATT_COLUMNS.some(column => column.id === 'Duration_Minutes'));
   assert.ok(ALL_ATT_FIELDS.includes('Duration_Minutes'));
@@ -191,6 +191,22 @@ test('stored duration joins the source projection and concurrency revision witho
   const source = { start: 1791864000, end: 1791867600, t: ['L', 17], student: ['L'], group2: ['L', 31] };
   assert.notEqual(lessonVersion(source), lessonVersion({ ...source, Duration_Minutes: 60 }));
   assert.equal(lessonVersion(source), lessonVersion({ ...source, Duration_Minutes: null }));
+});
+
+test('schema setup never requires or recreates Calendar_Origin and ignores any leftover definition', async () => {
+  const base = [...sourceColumns(), ...structuredClone(ALL_ATT_COLUMNS), ...structuredClone(ALL_ATT_HELPER_COLUMNS)];
+  assert.ok(!ALL_ATT_COLUMNS.some(column => column.id === 'Calendar_Origin'));
+  assert.doesNotMatch(ALL_ATT_REVISION_FORMULA, /Calendar_Origin/);
+  for (const columns of [base, [...base, { id: 'Calendar_Origin', fields: { type: 'Any', isFormula: true, formula: 'legacy definition' } }]]) {
+    const before = structuredClone(columns);
+    const client = clientFor(columns);
+    assert.equal((await ensureAllAttSchema(client)).addedColumnCount, 0);
+    assert.equal(client.calls.length, 1);
+    assert.deepEqual(columns, before);
+  }
+  const sourceOnly = clientFor(sourceColumns());
+  await ensureAllAttSchema(sourceOnly);
+  assert.ok(sourceOnly.calls[1].body.columns.every(column => column.id !== 'Calendar_Origin'));
 });
 
 test('setup rejects an old end trigger or unknown derived formula instead of migrating definitions', async () => {

@@ -54,7 +54,7 @@ $gristConfigJson | node scripts/grist-setup.mjs --grist-stdin
 
 This command **adds missing calendar columns**, validates existing definitions and previews aggregate preparation counts. It does not create headers or link attendance without `--prepare-all-att`. It never deletes existing columns or changes an incompatible existing definition; a mismatch stops setup.
 
-The 13 base columns are:
+The 12 base columns are:
 
 | Column | Purpose |
 | --- | --- |
@@ -67,7 +67,6 @@ The 13 base columns are:
 | `Calendar_Status` | Scheduling state: scheduled, cancelled or deleted |
 | `Calendar_Notes` | Calendar-specific notes, separate from original `notes` |
 | `Calendar_Mutation` | Last calendar edit/delete identifier |
-| `Calendar_Origin` | Record origin |
 | `Calendar_Parent` | Reference to another `ALL_ATT` row serving as a group header |
 | `Calendar_Attendance` | Attendance state; pending bookings do not imply attendance |
 | `Calendar_Revision` | Formula revision covering schedule, classification and calendar fields |
@@ -79,6 +78,8 @@ Exact types and formulas are defined in [`server/all-att-schema.mjs`](../server/
 Calendar_UID may be a plain Text data column or use a new-record-only default of `UUID()` or `value or UUID()`, with no record-change dependencies. Explicitly supplied calendar/preparation IDs must remain stored unchanged. A regular formula column or a change-trigger configuration is rejected. Setup preserves the accepted existing definition and does not convert columns automatically. See [COLUMNS.md](../COLUMNS.md) for identity decisions and the shared date registry.
 
 The user removed the former `Calendar_Lessons` table and ALL_ATT.Calendar_Lesson/Calendar_Source_Revision fields from the development sandbox. The active adapter and default setup work without them and do not recreate them. The optional legacy-copy commands below are historical migration capabilities for documents that still have that table; do not use them against this sandbox.
+
+Calendar_Origin is retired from the active schema/projection/revision/write contract. Prepared group headers are identified by the exact case-sensitive `^all-att-group:[a-f0-9]{64}$` Calendar_UID pattern and remain hidden until attendance links exist. Manual/UUID/legacy headers stay visible without attendance. No existing UID is regenerated and no replacement column is needed. Removing the obsolete field from another document requires a dependency audit and revision update first; setup never deletes it automatically.
 
 ## Prepare group headers and links explicitly
 

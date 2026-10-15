@@ -203,7 +203,7 @@ export function createAllAttStore({ client } = {}) {
       const createFields = { Calendar_UID: draft.clientId, ...values,
         student: ['L', ...candidate.studentIds.map(id => Number(id.slice(6)))],
         group2: ['L', ...candidate.groupIds.map(id => Number(id.slice(4)))],
-        Calendar_Mutation: mutationId, Calendar_Origin: 'calendar', Calendar_Parent: 0, Calendar_Attendance: 'pending' };
+        Calendar_Mutation: mutationId, Calendar_Parent: 0, Calendar_Attendance: 'pending' };
       const expected = { ...createFields, end: createFields.start + createFields.Duration_Minutes * 60 };
       delete expected.Calendar_Mutation;
       const duplicate = tables.attendance.filter(record => record.fields.Calendar_UID === draft.clientId);

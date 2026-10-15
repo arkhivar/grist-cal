@@ -149,8 +149,9 @@ test('calendar metadata stays separate from original attendance notes and no mon
 });
 
 test('generated group headers wait for explicit child linkage and retain metadata for resumable preparation', () => {
-  const generated = header(10, { Calendar_Origin: 'all-att-group-header' });
-  const pending = normalize([generated, child(20, 0), header(11, { Calendar_Origin: 'calendar' })]);
+  const generatedUid = `all-att-group:${'a'.repeat(64)}`;
+  const generated = header(10, { Calendar_UID: generatedUid });
+  const pending = normalize([generated, child(20, 0), header(11, { Calendar_UID: 'manual-identity' })]);
   assert.deepEqual(pending.lessons.map(lesson => lesson.id), ['all-att:11']);
   assert.equal(pending.meta.pendingImportLessonCount, 1);
   assert.equal(pending.groupHeaders.length, 2);
@@ -158,9 +159,38 @@ test('generated group headers wait for explicit child linkage and retain metadat
   assert.equal(ready.lessons.length, 1);
   assert.equal(ready.meta.pendingImportLessonCount, 0);
   assert.equal(ready.meta.importedLessonCount, 1);
-  const deleted = normalize([header(10, { Calendar_Origin: 'all-att-group-header', Calendar_Status: 'deleted' })]);
+  assert.equal(ready.lessons[0].origin, 'all-att-group-header');
+  const deleted = normalize([header(10, { Calendar_UID: generatedUid, Calendar_Status: 'deleted' })]);
   assert.equal(deleted.meta.pendingImportLessonCount, 0);
   assert.equal(deleted.meta.deletedLessonCount, 1);
+});
+
+test('only exact prepared group UIDs hide unlinked headers; manual, UUID, legacy and malformed IDs remain visible', () => {
+  const preparedUid = `all-att-group:${'0123456789abcdef'.repeat(4)}`;
+  const visibleUids = [undefined, null, '', 'teacher-picked', '618ab656-1d93-4e6c-87ee-f82918c222b4', 'legacy-calendar:701',
+    'all-att-group:', `all-att-group:${'a'.repeat(63)}`, `all-att-group:${'a'.repeat(65)}`,
+    `all-att-group:${'A'.repeat(64)}`, `all-att-group:${'g'.repeat(64)}`, `${preparedUid}:extra`,
+    `${preparedUid}\n`, ` ${preparedUid}`, `prefix:${preparedUid}`];
+  const rows = visibleUids.map((Calendar_UID, index) => header(index + 1, { Calendar_UID, Calendar_Origin: 'all-att-group-header' }));
+  const result = normalize([...rows, header(100, { Calendar_UID: preparedUid }),
+    row(101, { Calendar_UID: preparedUid })]);
+  assert.deepEqual(result.lessons.map(lesson => lesson.sourceRowId), [...rows.map(row => row.id), 101]);
+  assert.equal(result.meta.pendingImportLessonCount, 1);
+  assert.equal(result.meta.importedLessonCount, 0);
+  assert.equal(result.lessons.find(lesson => lesson.sourceRowId === 6).origin, 'calendar-legacy');
+  assert.equal(result.lessons.find(lesson => lesson.sourceRowId === 101).origin, '');
+});
+
+test('removed Calendar_Origin values cannot affect visibility, versions or normalized lesson metadata', () => {
+  const source = [header(10, { Calendar_UID: 'manual' }), child(20), row(30)];
+  const expected = normalize(source);
+  for (const Calendar_Origin of ['', 'calendar', 'attendance-import', 'all-att-group-header', 'private legacy value']) {
+    const withRemovedColumn = source.map(row => ({ ...row, fields: { ...row.fields, Calendar_Origin } }));
+    assert.deepEqual(normalize(withRemovedColumn), expected);
+    assert.equal(lessonVersion(withRemovedColumn[0]), lessonVersion(source[0]));
+  }
+  assert.ok(!ALL_ATT_FIELDS.includes('Calendar_Origin'));
+  assert.ok(!Object.hasOwn(lessonFields({ Calendar_Origin: 'unused' }), 'Calendar_Origin'));
 });
 
 test('versions cover every source and calendar field, preserve wire values, and exclude legacy/financial fields', () => {
