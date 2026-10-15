@@ -18,7 +18,8 @@ const blankCalendar = () => ({ Calendar_UID: '', Calendar_Title: '', Calendar_Gr
   Calendar_Mutation: '', Calendar_Origin: '', Calendar_Parent: 0, Calendar_Attendance: '' });
 function initialTables() {
   const fields = { ...blankCalendar(),
-    start: Date.parse('2026-10-13T00:00:00Z') / 1000, end: Date.parse('2026-10-13T01:00:00Z') / 1000,
+    start: Date.parse('2026-10-13T00:00:00Z') / 1000, Duration_Minutes: 60,
+    end: Date.parse('2026-10-13T01:00:00Z') / 1000,
     t: ['L', 17], student: ['L'], group2: ['L', 40], notes: 'Untouched original notes',
     Calendar_UID: UID, Calendar_Title: 'Lesson A', Calendar_Group_Label: 'Group A', Calendar_Room: 'Room 2',
     Calendar_Checklist: '1/3', Calendar_Status: 'scheduled', Calendar_Notes: 'Calendar notes',
@@ -43,13 +44,16 @@ function initialTables() {
   };
 }
 function mockClient({ beforeMutation, afterMutation, response, rejectMutation, failReadback, failRegistry = false,
-  invalidRevision = false } = {}) {
+  invalidRevision = false, calculateEnd = fields => typeof fields.start === 'number' && Number.isFinite(fields.start) &&
+    typeof fields.Duration_Minutes === 'number' && Number.isFinite(fields.Duration_Minutes) && fields.Duration_Minutes > 0
+    ? fields.start + fields.Duration_Minutes * 60 : null } = {}) {
   const tables = initialTables();
   const reads = [];
   const writes = [];
   let nextId = 57;
   const recalculate = () => {
     for (const row of tables.ALL_ATT) {
+      row.fields.end = calculateEnd(row.fields);
       // Simulate the independent DateRegistry formula ref; it must never affect CAS.
       const localDay = new Date((row.fields.start + 10 * 3600) * 1000).toISOString().slice(0, 10);
       row.fields.Calendar_Date = tables.DateRegistry.find(date =>
@@ -84,6 +88,7 @@ function mockClient({ beforeMutation, afterMutation, response, rejectMutation, f
       for (const operation of body.records) {
         assert.ok(Object.values(operation.require).every(value => !Array.isArray(value)), 'Grist lookup cannot hash RefLists');
         assert.ok(!Object.hasOwn(operation.fields, 'Calendar_Revision'), 'The revision is formula-only');
+        assert.ok(!Object.hasOwn(operation.fields, 'end'), 'The calculated end must never be written');
         const found = tables.ALL_ATT.filter(record => Object.entries(operation.require)
           .every(([field, value]) => equal(field === 'id' ? record.id : record.fields[field], value)));
         if (found.length > 1) { recordIds.push([]); continue; }
@@ -145,7 +150,6 @@ test('DateRegistry follows the Vladivostok date after a move without entering so
   assert.ok(client.reads.filter(read => read.table === 'ALL_ATT').every(read => !read.fields.includes('Calendar_Date')));
   assert.deepEqual(client.writes[0].body.records[0].fields, {
     Calendar_Mutation: MUTATION, start: Date.parse('2026-10-13T14:30:00Z') / 1000,
-    end: Date.parse('2026-10-13T15:30:00Z') / 1000,
   });
   const after = await store.getSnapshot();
   assert.equal(after.lessons.find(item => item.id === lesson.id).calendarDateId, 'date:102');
@@ -278,7 +282,7 @@ test('snapshot, create, edit and delete work with the entire legacy lesson schem
   assert.deepEqual(legacyAccesses, []);
 });
 
-test('ALL_ATT lesson edits write existing start/end/t and new calendar fields only', async () => {
+test('ALL_ATT lesson edits write start/duration/t and calendar fields while end is calculated', async () => {
   const client = mockClient();
   const store = createAllAttStore({ client });
   const before = clone(client.tables);
@@ -300,9 +304,137 @@ test('ALL_ATT lesson edits write existing start/end/t and new calendar fields on
   }
   assert.deepEqual(fields.t, ['L', 18]);
   assert.equal(fields.start, Date.parse('2026-10-14T04:15:00Z') / 1000);
+  assert.equal(fields.Duration_Minutes, 90);
   assert.deepEqual(Object.keys(client.writes[0].body.records[0].fields).sort(),
-    ['Calendar_Mutation', 't', 'Calendar_Group_Label', 'start', 'end', 'Calendar_Status', 'Calendar_Notes'].sort());
+    ['Calendar_Mutation', 't', 'Calendar_Group_Label', 'start', 'Duration_Minutes', 'Calendar_Status', 'Calendar_Notes'].sort());
   assert.deepEqual(Object.keys(client.writes[0].body.records[0].require).sort(), ['Calendar_Revision', 'id']);
+});
+
+test('calendar moves and start-only edits preserve the exact stored fractional duration and child attendance', async () => {
+  const client = mockClient();
+  const minutes = 40.123456789;
+  client.tables.ALL_ATT[0].fields.Duration_Minutes = minutes;
+  const store = createAllAttStore({ client });
+  const lesson = await groupLesson(store);
+  const children = clone(client.tables.ALL_ATT.slice(1));
+  const shift = 24 * 60 * 60 * 1000;
+  const moved = await store.saveLesson({ id: lesson.id,
+    start: new Date(Date.parse(lesson.start) + shift).toISOString(),
+    end: new Date(Date.parse(lesson.end) + shift).toISOString() },
+  { expectedVersion: lesson.version, mutationId: MUTATION });
+  assert.equal(client.tables.ALL_ATT[0].fields.Duration_Minutes, minutes);
+  assert.deepEqual(client.writes[0].body.records[0].fields,
+    { Calendar_Mutation: MUTATION, start: Date.parse(moved.start) / 1000 });
+
+  const partialStart = '2026-10-15T23:50:00+10:00';
+  const partial = await store.saveLesson({ id: lesson.id, start: partialStart },
+    { expectedVersion: moved.version, mutationId: OTHER_MUTATION });
+  assert.equal(client.tables.ALL_ATT[0].fields.Duration_Minutes, minutes);
+  assert.equal(client.tables.ALL_ATT[0].fields.end, Date.parse(partialStart) / 1000 + minutes * 60);
+  assert.ok(Math.abs(Date.parse(partial.end) - (Date.parse(partialStart) + minutes * 60000)) < 1);
+  assert.deepEqual(client.writes[1].body.records[0].fields,
+    { Calendar_Mutation: OTHER_MUTATION, start: Date.parse(partialStart) / 1000 });
+  assert.deepEqual(client.tables.ALL_ATT.slice(1), children);
+});
+
+test('end-only resizing stores minutes while metadata edits leave both schedule inputs untouched', async () => {
+  const client = mockClient();
+  const store = createAllAttStore({ client });
+  const lesson = await groupLesson(store);
+  const attendance = clone(client.tables.ALL_ATT.slice(1));
+  const resized = await store.saveLesson({ id: lesson.id, end: '2026-10-13T00:47:30.000Z', Duration_Minutes: 999 },
+    { expectedVersion: lesson.version, mutationId: MUTATION });
+  assert.equal(resized.start, lesson.start);
+  assert.equal(resized.end, '2026-10-13T00:47:30.000Z');
+  assert.equal(client.tables.ALL_ATT[0].fields.Duration_Minutes, 47.5, 'Untrusted extra fields cannot replace endpoint-derived minutes');
+  assert.deepEqual(client.writes[0].body.records[0].fields, { Calendar_Mutation: MUTATION, Duration_Minutes: 47.5 });
+  const edited = await store.saveLesson({ id: lesson.id, title: 'Same schedule, new title' },
+    { expectedVersion: resized.version, mutationId: OTHER_MUTATION });
+  assert.equal(edited.start, lesson.start);
+  assert.equal(edited.end, resized.end);
+  assert.deepEqual(client.writes[1].body.records[0].fields,
+    { Calendar_Mutation: OTHER_MUTATION, Calendar_Title: 'Same schedule, new title' });
+  assert.deepEqual(client.tables.ALL_ATT.slice(1), attendance);
+});
+
+test('new lessons derive stored fractional minutes from endpoints and verify the formula end', async () => {
+  const client = mockClient();
+  const store = createAllAttStore({ client });
+  const draft = { ...freshDraft(), start: '2026-10-14T23:50:00+10:00', end: '2026-10-15T01:05:15+10:00' };
+  const saved = await store.saveLesson(draft, { mutationId: MUTATION });
+  assert.equal(saved.end, '2026-10-14T15:05:15.000Z');
+  assert.equal(client.tables.ALL_ATT.at(-1).fields.Duration_Minutes, 75.25);
+  assert.equal(client.writes[0].body.records[0].fields.Duration_Minutes, 75.25);
+  assert.equal(Object.hasOwn(client.writes[0].body.records[0].fields, 'end'), false);
+});
+
+test('direct Grist duration edits conflict before submission and during atomic compare-and-swap', async () => {
+  for (const racing of [false, true]) {
+    // This change is below the public timestamp precision: the raw input still
+    // belongs in the revision even when the displayed end looks unchanged.
+    const minutes = 60 + 1e-10;
+    const client = mockClient(racing ? { beforeMutation: tables => { tables.ALL_ATT[0].fields.Duration_Minutes = minutes; } } : {});
+    const store = createAllAttStore({ client });
+    const lesson = await groupLesson(store);
+    if (!racing) client.tables.ALL_ATT[0].fields.Duration_Minutes = minutes;
+    await assert.rejects(store.saveLesson({ ...lesson, room: 'Must not overwrite concurrent duration' },
+      { expectedVersion: lesson.version, mutationId: MUTATION }), { code: 'VERSION_CONFLICT', status: 409 });
+    assert.equal(client.tables.ALL_ATT[0].fields.Duration_Minutes, minutes);
+    assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Room, 'Room 2');
+    assert.equal(client.writes.length, racing ? 1 : 0);
+  }
+});
+
+test('formula readback tolerates microsecond arithmetic only and rejects a different calculated end', async () => {
+  for (const offset of [0.000001, 5]) {
+    let afterWrite = false;
+    const client = mockClient({ afterMutation: () => { afterWrite = true; },
+      calculateEnd: fields => fields.start + fields.Duration_Minutes * 60 + (afterWrite ? offset : 0) });
+    const store = createAllAttStore({ client });
+    const lesson = await groupLesson(store);
+    const promise = store.saveLesson({ id: lesson.id, end: '2026-10-13T01:20:00Z' },
+      { expectedVersion: lesson.version, mutationId: MUTATION });
+    if (offset < 0.000002) assert.equal((await promise).id, lesson.id);
+    else await assert.rejects(promise, { code: 'VERSION_CONFLICT' });
+    assert.deepEqual(client.writes[0].body.records[0].fields, { Calendar_Mutation: MUTATION, Duration_Minutes: 80 });
+  }
+});
+
+test('lost responses for moves and resizing resolve through readback and retry without a second write', async () => {
+  for (const patch of [{ start: '2026-10-14T14:30:00Z' }, { end: '2026-10-13T01:20:30Z' }]) {
+    const client = mockClient({ afterMutation: () => { throw networkFailure(); } });
+    const store = createAllAttStore({ client });
+    const lesson = await groupLesson(store);
+    const attendance = clone(client.tables.ALL_ATT.slice(1));
+    const draft = { id: lesson.id, ...patch };
+    const options = { expectedVersion: lesson.version, mutationId: MUTATION };
+    const saved = await store.saveLesson(draft, options);
+    const retry = await store.saveLesson(draft, options);
+    assert.equal(retry.version, saved.version);
+    assert.equal(retry.start, saved.start);
+    assert.equal(retry.end, saved.end);
+    assert.equal(client.writes.length, 1);
+    assert.deepEqual(client.tables.ALL_ATT.slice(1), attendance);
+  }
+});
+
+test('a retry preserves sub-millisecond source duration when moving rounds the two visible endpoints differently', async () => {
+  const client = mockClient({ afterMutation: () => { throw networkFailure(); } });
+  client.tables.ALL_ATT[0].fields.start += 0.0006;
+  client.tables.ALL_ATT[0].fields.Duration_Minutes = 40.00001;
+  const store = createAllAttStore({ client });
+  const lesson = await groupLesson(store);
+  const shift = 86400000;
+  const draft = { id: lesson.id, start: new Date(Date.parse(lesson.start) + shift).toISOString(),
+    end: new Date(Date.parse(lesson.end) + shift).toISOString() };
+  const options = { expectedVersion: lesson.version, mutationId: MUTATION };
+  const saved = await store.saveLesson(draft, options);
+  assert.equal(Math.abs(Date.parse(saved.end) - Date.parse(draft.end)), 1);
+  assert.equal((await store.saveLesson(draft, options)).version, saved.version);
+  assert.equal(client.tables.ALL_ATT[0].fields.Duration_Minutes, 40.00001);
+  assert.equal(client.writes.length, 1);
+  await assert.rejects(store.saveLesson({ ...draft, end: new Date(Date.parse(draft.end) + 1000).toISOString() }, options),
+    { code: 'VERSION_CONFLICT' });
 });
 
 test('ALL_ATT existing row identity and source attendance rows cannot be edited as lessons', async () => {

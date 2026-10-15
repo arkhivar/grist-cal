@@ -10,7 +10,7 @@ const identityFields = ['lessonKind', 'studentIds', 'groupIds'];
 const validRevision = record => typeof record?.fields?.Calendar_Revision === 'string' && HASH.test(record.fields.Calendar_Revision);
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const fieldsByName = {
-  title: 'Calendar_Title', teacherId: 't', group: 'Calendar_Group_Label', start: 'start', end: 'end',
+  title: 'Calendar_Title', teacherId: 't', group: 'Calendar_Group_Label', start: 'start',
   room: 'Calendar_Room', participantText: 'Calendar_Participants', checklist: 'Calendar_Checklist',
   status: 'Calendar_Status', notes: 'Calendar_Notes',
 };
@@ -41,7 +41,12 @@ function referenceValue(value) {
 function matches(actual, expected) {
   // Grist can canonicalize an empty RefList to null or change its ordering.
   return Object.entries(expected).every(([field, value]) => referenceFields.includes(field)
-    ? equal(referenceValue(actual[field]), referenceValue(value)) : equal(actual[field], value));
+    ? equal(referenceValue(actual[field]), referenceValue(value))
+    // Python datetime rounds to microseconds; JS epoch arithmetic can differ by
+    // a few floating-point units. Only the calculated end gets this tolerance.
+    : field === 'end' && typeof value === 'number' && typeof actual[field] === 'number'
+      ? Number.isFinite(value) && Number.isFinite(actual[field]) && Math.abs(actual[field] - value) <= 0.000002
+      : equal(actual[field], value));
 }
 function canonicalIds(ids, prefix) {
   if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string' ||
@@ -50,7 +55,7 @@ function canonicalIds(ids, prefix) {
   }
   return [...new Set(ids)].sort((a, b) => Number(a.split(':')[1]) - Number(b.split(':')[1]));
 }
-function candidateFrom(draft, existing, snapshot) {
+function candidateFrom(draft, existing, snapshot, sourceDuration) {
   const candidate = existing ? structuredClone(existing) : {
     type: 'lesson', title: '', teacherId: '', group: '', start: '', end: '', room: '',
     participantText: '', checklist: '', status: 'scheduled', notes: '',
@@ -58,6 +63,11 @@ function candidateFrom(draft, existing, snapshot) {
   };
   for (const field of [...editableFields, ...identityFields]) {
     if (Object.hasOwn(draft, field)) candidate[field] = structuredClone(draft[field]);
+  }
+  if (existing && Object.hasOwn(draft, 'start') && !Object.hasOwn(draft, 'end')) {
+    // A partial move follows the same rule as a calendar drag: preserve minutes.
+    try { candidate.end = new Date(Math.round(Date.parse(candidate.start) + sourceDuration * 60000)).toISOString(); }
+    catch { throw failure('VALIDATION_ERROR', 'Choose a valid lesson start.', 400); }
   }
   candidate.studentIds = canonicalIds(candidate.studentIds, 'folks');
   candidate.groupIds = canonicalIds(candidate.groupIds, 'per');
@@ -83,7 +93,7 @@ function candidateFrom(draft, existing, snapshot) {
   try { return validateLesson(candidate, snapshot.teachers); }
   catch (error) { error.status = 400; throw error; }
 }
-function writableValues(candidate, teachers, { existing, performance }) {
+function writableValues(candidate, teachers, { existing, performance, sourceDuration, preserveDuration }) {
   const teacherIds = teachers.find(({ id }) => id === candidate.teacherId)?.sourceIds;
   if (!Array.isArray(teacherIds) || teacherIds.some(id => !Number.isSafeInteger(id) || id <= 0)) {
     throw failure('VALIDATION_ERROR', 'Choose a valid teacher for this lesson.', 400);
@@ -92,8 +102,13 @@ function writableValues(candidate, teachers, { existing, performance }) {
     teacherIds.some(id => !performance.some(record => record.id === id))) {
     throw failure('VALIDATION_ERROR', 'Choose an existing teacher for this lesson.', 400);
   }
+  const elapsed = Date.parse(candidate.end) - Date.parse(candidate.start);
+  const unchangedDuration = existing && elapsed === Date.parse(existing.end) - Date.parse(existing.start);
   return {
-    Calendar_Title: candidate.title, start: Date.parse(candidate.start) / 1000, end: Date.parse(candidate.end) / 1000,
+    Calendar_Title: candidate.title, start: Date.parse(candidate.start) / 1000,
+    // Preserve fractional stored values on moves, including precision finer than
+    // the public ISO timestamps. Resizing derives a new value from the endpoints.
+    Duration_Minutes: existing && (preserveDuration || unchangedDuration) ? sourceDuration : elapsed / 60000,
     t: ['L', ...teacherIds], Calendar_Group_Label: candidate.group, Calendar_Room: candidate.room,
     Calendar_Participants: candidate.participantText, Calendar_Checklist: candidate.checklist,
     Calendar_Status: candidate.status, Calendar_Notes: candidate.notes,
@@ -176,15 +191,20 @@ export function createAllAttStore({ client } = {}) {
     }
     const existing = isUpdate ? snapshot.lessons.find(lesson => lesson.id === draft.id) : null;
     if (isUpdate && !existing) throw failure('VERSION_CONFLICT', 'This lesson needs valid scheduling data before it can be edited.', 409);
-    const candidate = candidateFrom(draft, existing, snapshot);
-    const values = writableValues(candidate, snapshot.teachers, { existing, performance: tables.performance });
+    const sourceDuration = current?.fields.Duration_Minutes;
+    if (isUpdate && (typeof sourceDuration !== 'number' || !Number.isFinite(sourceDuration) || sourceDuration <= 0)) {
+      throw failure('SCHEMA_ERROR', 'This lesson needs a valid stored duration before it can be edited.', 503);
+    }
+    const candidate = candidateFrom(draft, existing, snapshot, sourceDuration);
+    const values = writableValues(candidate, snapshot.teachers, { existing, performance: tables.performance, sourceDuration,
+      preserveDuration: isUpdate && Object.hasOwn(draft, 'start') && !Object.hasOwn(draft, 'end') });
 
     if (!isUpdate) {
       const createFields = { Calendar_UID: draft.clientId, ...values,
         student: ['L', ...candidate.studentIds.map(id => Number(id.slice(6)))],
         group2: ['L', ...candidate.groupIds.map(id => Number(id.slice(4)))],
         Calendar_Mutation: mutationId, Calendar_Origin: 'calendar', Calendar_Parent: 0, Calendar_Attendance: 'pending' };
-      const expected = { ...createFields };
+      const expected = { ...createFields, end: createFields.start + createFields.Duration_Minutes * 60 };
       delete expected.Calendar_Mutation;
       const duplicate = tables.attendance.filter(record => record.fields.Calendar_UID === draft.clientId);
       if (duplicate.length) {
@@ -210,15 +230,26 @@ export function createAllAttStore({ client } = {}) {
     const originalFields = lessonFields(current);
     // A lost response can be resolved by its mutation even when the original version is now stale.
     if (originalFields.Calendar_Mutation === mutationId) {
-      if (editableFields.every(field => equal(candidate[field], existing[field]))) return savedLesson(tables, current);
+      // A move preserves the raw duration even if it contains fractional
+      // milliseconds that the public timestamps cannot express. Rounding the
+      // old endpoints independently can make a repeated end differ by 1 ms.
+      const sameEnd = equal(candidate.end, existing.end) || (!Number.isInteger(sourceDuration * 60000) &&
+        Math.abs(Date.parse(candidate.end) - Date.parse(existing.end)) <= 1);
+      if (sameEnd && editableFields.filter(field => field !== 'end').every(field => equal(candidate[field], existing[field]))) {
+        return savedLesson(tables, current);
+      }
       throw failure('VERSION_CONFLICT', 'This save identifier was already used for another edit. Refresh before continuing.', 409);
     }
     if (lessonVersion(current) !== expectedVersion) throw failure('VERSION_CONFLICT', conflictMessage, 409);
     const changes = { Calendar_Mutation: mutationId };
     for (const field of editableFields) {
-      if (!equal(candidate[field], existing[field])) changes[fieldsByName[field]] = values[fieldsByName[field]];
+      if (field !== 'end' && !equal(candidate[field], existing[field])) changes[fieldsByName[field]] = values[fieldsByName[field]];
     }
+    if (!equal(values.Duration_Minutes, sourceDuration)) changes.Duration_Minutes = values.Duration_Minutes;
     const expected = { ...originalFields, ...changes };
+    if (Object.hasOwn(changes, 'start') || Object.hasOwn(changes, 'Duration_Minutes')) {
+      expected.end = expected.start + expected.Duration_Minutes * 60;
+    }
     delete expected.Calendar_Revision;
     let result;
     let writeFailure;

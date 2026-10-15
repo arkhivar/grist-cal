@@ -1,4 +1,4 @@
-import { fromSchoolInput, schoolInput } from './domain.js';
+import { fromSchoolInput, preciseSchoolInput } from './domain.js';
 
 export const DURATION_PRESETS = Object.freeze([40, 60, 80]);
 
@@ -6,14 +6,16 @@ export const DURATION_PRESETS = Object.freeze([40, 60, 80]);
 export function durationMinutes(startInput, endInput) {
   try {
     const minutes = (Date.parse(fromSchoolInput(endInput)) - Date.parse(fromSchoolInput(startInput))) / 60000;
-    return Number.isSafeInteger(minutes) && minutes > 0 ? minutes : null;
+    return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
   } catch { return null; }
 }
 
 export function endForDuration(startInput, minutes) {
-  if (!Number.isSafeInteger(minutes) || minutes <= 0) throw new RangeError('Choose a positive whole-minute duration.');
+  if (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes <= 0) throw new RangeError('Choose a positive duration.');
+  const elapsed = Math.round(minutes * 60000);
+  if (!Number.isSafeInteger(elapsed) || elapsed <= 0) throw new RangeError('Choose a duration of at least one millisecond.');
   const start = Date.parse(fromSchoolInput(startInput));
-  const end = schoolInput(new Date(start + minutes * 60000));
+  const end = preciseSchoolInput(new Date(start + elapsed));
   // Reject an out-of-range result rather than writing a value the editor cannot round-trip.
   fromSchoolInput(end);
   return end;
@@ -29,7 +31,7 @@ export function createDurationController(startInput, endInput) {
   const getState = () => ({
     start, end, minutes,
     selection: !customSelected && DURATION_PRESETS.includes(minutes) ? String(minutes) : 'custom',
-    customLabel: minutes === null ? 'Custom (edit end time)' : `Custom (${minutes} min)`,
+    customLabel: minutes === null ? 'Custom (edit end time)' : `Custom (${Number(minutes.toFixed(6))} min)`,
   });
 
   function applyDuration() {

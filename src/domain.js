@@ -55,17 +55,29 @@ export function schoolInput(instant) {
   return `${year.padStart(4, '0')}-${month}-${day}T${hour}:${minute}`;
 }
 
+/** Editor values retain the seconds and milliseconds present in a saved instant. */
+export function preciseSchoolInput(instant) {
+  const date = instantDate(instant);
+  const { year, month, day, hour, minute, second } = inSchool(date);
+  const base = `${year.padStart(4, '0')}-${month}-${day}T${hour}:${minute}`;
+  const milliseconds = date.getUTCMilliseconds();
+  if (second === '00' && milliseconds === 0) return base;
+  const fraction = milliseconds ? `.${String(milliseconds).padStart(3, '0').replace(/0+$/, '')}` : '';
+  return `${base}:${second}${fraction}`;
+}
+
 export function fromSchoolInput(input) {
-  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/.exec(input);
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(input);
   if (!match) throw invalid('Choose a valid school date and time.');
   dateParts(match[1]);
-  if (Number(match[2]) > 23 || Number(match[3]) > 59) throw invalid('Choose a valid school time.');
-  const target = Date.parse(`${input}:00.000Z`);
+  if (Number(match[2]) > 23 || Number(match[3]) > 59 || Number(match[4] || 0) > 59) throw invalid('Choose a valid school time.');
+  const target = Date.parse(`${match[1]}T${match[2]}:${match[3]}:${match[4] || '00'}.${(match[5] || '').padEnd(3, '0')}Z`);
   let candidate = target;
   // Resolve the IANA-zone offset using UTC arithmetic, independent of the device timezone.
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const parts = inSchool(candidate);
-    const projected = Date.parse(`${parts.year.padStart(4, '0')}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}.000Z`);
+    const projected = Date.parse(`${parts.year.padStart(4, '0')}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}.000Z`)
+      + new Date(candidate).getUTCMilliseconds();
     const correction = target - projected;
     if (correction === 0) return new Date(candidate).toISOString();
     candidate += correction;

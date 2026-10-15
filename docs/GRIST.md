@@ -42,7 +42,7 @@ The user's current classification is based on the existing reference cells:
 
 An empty student cell is deliberately treated as a group header under this rule, including existing rows. Missing or invalid times still prevent an event from rendering. There are no special indie/trial group-name exceptions in the current model.
 
-`start`, `end` and `t` are the canonical schedule and teacher fields. The user explicitly authorizes updating those existing cells when editing a lesson. The calendar does not substitute new schedule override columns. Missing teachers appear as Unassigned; multiple references remain a combination.
+`start` and stored `Duration_Minutes` are the authoritative schedule inputs; `end` is a DateTime formula adding elapsed minutes in UTC. Teacher edits update `t`. The calendar accepts start/end in its UI/API and translates scheduling edits to the stored inputs. Missing teachers appear as Unassigned; multiple references remain a combination.
 
 `Calendar_Parent` links a group attendance row to a header within `ALL_ATT`. Individual attendance belongs to its own lesson row without creating a second row. Calendar event identities are `all-att:<row ID>`; `Calendar_UID` provides stable identities for creates and preparation retries.
 
@@ -72,9 +72,9 @@ The 13 base columns are:
 | `Calendar_Attendance` | Attendance state; pending bookings do not imply attendance |
 | `Calendar_Revision` | Formula revision covering schedule, classification and calendar fields |
 
-Setup also adds `Duration_Minutes`, a read-only Numeric formula helper calculated from each row's start/end. It reports elapsed minutes after converting both timestamps to UTC, preserves fractional minutes and stays blank for missing/invalid/nonpositive intervals. Existing column definitions are never rewritten. The helper is not included in scheduling writes or concurrency revisions.
+Setup validates stored Numeric `Duration_Minutes` and the derived end formula. Duration has no automatic Grist default; new calendar lessons supply 60 minutes or their selected range. Positive fractional durations are supported. Missing/invalid/nonpositive duration yields a blank end. Duration is included in scheduling writes and concurrency revisions.
 
-Exact types and the revision formula are defined in [`server/all-att-schema.mjs`](../server/all-att-schema.mjs). Setup validates the existing `start`/`end` timezone, reference types and editability; it retains existing trigger formulas. True formula columns cannot accept scheduling edits, so an incompatible source definition stops setup.
+Exact types and formulas are defined in [`server/all-att-schema.mjs`](../server/all-att-schema.mjs). Setup validates the existing start/end timezone, the calculated end definition and editable source fields. It does not migrate old definitions automatically. Documents using the previous calculated duration and stored end need an explicit coordinated migration: freeze current duration values first, convert end, update the revision formula and adapter, then verify all original endpoints before allowing writes. Do not change only one side of this relationship.
 
 Calendar_UID may be a plain Text data column or use a new-record-only default of `UUID()` or `value or UUID()`, with no record-change dependencies. Explicitly supplied calendar/preparation IDs must remain stored unchanged. A regular formula column or a change-trigger configuration is rejected. Setup preserves the accepted existing definition and does not convert columns automatically. See [COLUMNS.md](../COLUMNS.md) for identity decisions and the shared date registry.
 
@@ -163,9 +163,9 @@ The server binds only to `127.0.0.1`. It validates local hosts, same-origin requ
 
 ## What is saved
 
-The editor offers **40, 60 and 80 minutes**, plus Custom. Choosing a preset updates End; changing Start keeps the current valid duration. Editing End directly updates the duration display without rounding. Custom focuses End for manual adjustment. Existing/duplicate/selected-range lessons retain their current minute length, and new click-created lessons default to 60 minutes. The save still sends start/end; Duration_Minutes follows them automatically in Grist. Direct start-only edits in Grist retain a nonempty end because its existing fallback trigger remains unchanged.
+The editor offers **40, 60 and 80 minutes**, plus Custom. Choosing a preset updates End; changing Start keeps the current valid duration. Editing End directly updates the duration display without rounding. Custom focuses End for manual adjustment. Existing/duplicate/selected-range lessons retain their current minute length, and new click-created lessons default to 60 minutes. The browser sends start/end; the adapter writes start/duration and verifies the calculated end. Typing a duration or changing start directly in Grist recalculates end even when the calendar server is stopped. End is read-only in Grist.
 
-Create, edit, move, resize and cancel operations save narrow scheduling fields in `ALL_ATT`. A changed time or teacher writes the existing `start`, `end` or `t` cell. Other calendar edits use the new calendar columns. Original `datetime`, `per`, `notes`, financial inputs and formula definitions are not directly rewritten by this adapter. Existing formulas and triggers can recalculate after source cells change; this is particularly relevant for an individual lesson sharing its attendance row. The integration does not promise unchanged computed wages or timestamps.
+Create, edit, move, resize and cancel operations save narrow scheduling fields in `ALL_ATT`. A changed schedule or teacher writes `start`, `Duration_Minutes` or `t`; the adapter never writes formula end. Metadata-only edits do not rewrite the schedule. Other calendar edits use the calendar columns. Original `datetime`, `per`, `notes`, financial inputs and formula definitions are not directly rewritten by this adapter. Existing formulas and triggers can recalculate after source cells change; this is particularly relevant for an individual lesson sharing its attendance row. The integration does not promise unchanged computed wages or timestamps.
 
 Moving a group header preserves the child attendance rows' original scheduling cells and parent links. Cancellation retains the source row and its attendance. The API does not treat student group-attendance rows as editable calendar events.
 

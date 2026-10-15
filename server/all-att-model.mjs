@@ -4,7 +4,7 @@ export { refs } from './grist-model.mjs';
 import { refs } from './grist-model.mjs';
 
 export const ALL_ATT_FIELDS = Object.freeze([
-  'start', 'end', 't', 'student', 'group2', 'notes',
+  'start', 'end', 'Duration_Minutes', 't', 'student', 'group2', 'notes',
   'Calendar_UID', 'Calendar_Title', 'Calendar_Group_Label', 'Calendar_Room',
   'Calendar_Participants', 'Calendar_Checklist', 'Calendar_Status', 'Calendar_Notes',
   'Calendar_Mutation', 'Calendar_Origin', 'Calendar_Parent', 'Calendar_Attendance', 'Calendar_Revision',
@@ -33,7 +33,7 @@ export function lessonFields(record) {
   const fields = fieldsOf(record);
   return Object.fromEntries(ALL_ATT_FIELDS.map(key => [key, Object.hasOwn(fields, key)
     ? structuredClone(fields[key])
-    : ['start', 'end', 't', 'student', 'group2'].includes(key) ? null : key === 'Calendar_Parent' ? 0 : '',
+    : ['start', 'end', 'Duration_Minutes', 't', 'student', 'group2'].includes(key) ? null : key === 'Calendar_Parent' ? 0 : '',
   ]));
 }
 
@@ -49,7 +49,9 @@ export function lessonVersion(record) {
 
 function epochToIso(epoch) {
   if (typeof epoch !== 'number' || !Number.isFinite(epoch)) return null;
-  const date = new Date(epoch * 1000);
+  // UI timestamps have millisecond precision; round floating epoch arithmetic
+  // instead of truncating an intended millisecond just below its boundary.
+  const date = new Date(Math.round(epoch * 1000));
   return Number.isFinite(date.getTime()) && date.getUTCFullYear() >= 1 && date.getUTCFullYear() <= 9999
     ? date.toISOString() : null;
 }
@@ -94,10 +96,12 @@ export function normalizeAllAttSnapshot({ attendance = [], performance = [], fol
     if (lessonKind === 'attendance') continue;
     const start = epochToIso(fields.start);
     const end = epochToIso(fields.end);
-    const valid = positiveId(record.id) && start && end && fields.end > fields.start;
+    const durationMinutes = fields.Duration_Minutes;
+    const valid = positiveId(record.id) && start && end && fields.end > fields.start &&
+      typeof durationMinutes === 'number' && Number.isFinite(durationMinutes) && durationMinutes > 0;
     if (lessonKind === 'group' && valid) {
       groupHeaders.push({ id: lessonId(record.id), sourceRowId: record.id,
-        start: fields.start, end: fields.end, teacherRefs: refs(fields.t), groupRefs: refs(fields.group2),
+        start: fields.start, end: fields.end, durationMinutes, teacherRefs: refs(fields.t), groupRefs: refs(fields.group2),
         status: text(fields.Calendar_Status) || 'scheduled',
       });
     }
@@ -126,7 +130,7 @@ export function normalizeAllAttSnapshot({ attendance = [], performance = [], fol
       title: text(fields.Calendar_Title).trim() || defaultTitle,
       teacherId: teacher, studentIds: students.map(id => `folks:${id}`),
       studentNames: students.map(id => studentName(id, folksById)), groupIds: groups.map(id => `per:${id}`),
-      group, start, end, room: text(fields.Calendar_Room), participantText: text(fields.Calendar_Participants),
+      group, start, end, durationMinutes, room: text(fields.Calendar_Room), participantText: text(fields.Calendar_Participants),
       checklist: text(fields.Calendar_Checklist), status: fields.Calendar_Status === 'cancelled' ? 'cancelled' : 'scheduled',
       notes: text(fields.Calendar_Notes), version: lessonVersion(fields), origin: text(fields.Calendar_Origin),
     });

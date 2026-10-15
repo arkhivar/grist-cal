@@ -1,6 +1,6 @@
 # Actual state
 
-Updated: 2026-10-15 (Asia/Vladivostok).
+Updated: 2026-10-16 (Asia/Vladivostok).
 
 ## Foundation and interface
 
@@ -22,9 +22,9 @@ Duplicate and Delete are available from an event's right-click/Shift+F10 menu an
 
 `ALL_ATT` is now the event and attendance source. Under the user's current rule, an empty `student` cell identifies a group header; a student with empty `group2` identifies one individual lesson and its attendance in the same row; a student with a group identifies attendance only. Group attendance links through `Calendar_Parent` to a header in the same table. The user deleted `Calendar_Lessons` and subsequently its obsolete ALL_ATT.Calendar_Lesson and Calendar_Source_Revision columns on 2026-10-15. API reads confirm their absence; none is used by the active adapter.
 
-Calendar edits update the existing `start`, `end` and `t` cells as authorized. Other scheduling details use new calendar fields. Moving a group header does not rewrite its children's dates or teachers. Individual edits change their own attendance row, so existing formulas can recalculate. New bookings use `Calendar_Attendance=pending` and do not count as recorded attendance. Existing attendance is displayed neutrally without inferring presence from notes, counts or wages.
+Calendar edits update `start`, `Duration_Minutes` and `t` as authorized; end is calculated. Other scheduling details use calendar fields. Moving a group header does not rewrite its children's dates or teachers. Individual edits change their own attendance row, so existing formulas can recalculate. New bookings use `Calendar_Attendance=pending` and do not count as recorded attendance. Existing attendance is displayed neutrally without inferring presence from notes, counts or wages.
 
-End-time inspection confirmed a stored DateTime with a guarded one-hour fallback trigger, not a fixed one-hour formula column. The editor now offers 40/60/80-minute presets and Custom, with Start edits preserving the current duration and manual End edits updating the duration display. A calculated Duration_Minutes column supplies minute lengths in Grist. Canonical start/end, the existing end trigger and save/revision fields remain unchanged.
+The editor offers 40/60/80-minute presets and Custom, with Start edits preserving duration and manual End edits updating the duration display. The user approved stored editable Duration_Minutes and formula end on 2026-10-16. The adapter translates UI endpoints into stored start/duration and verifies the derived end; raw duration participates in concurrency protection. The original end trigger and calculated duration helper are historical behavior, superseded by this migration.
 
 The live editor offers group/individual type and student/group references for new lessons and duplicates. Existing type and student/group references are read-only; freeform group labels remain editable. Missing and multiple references remain explicit. Pending individual bookings can be found by student name.
 
@@ -70,7 +70,15 @@ Calendar UI support includes explicit closed-day shading/labels, holiday and ter
 
 The cleanup plan identifies date, day and hasDate as three gross ALL_ATT candidates, offset by one new reference column. The existing date field still supplies a conditional rule and the Calendar_Parent display helper. No helper or formatting definition was changed or deleted. Full consumer review and practical validation come before cleanup. This registry adds useful shared metadata; no large-document speedup or 50k/100k benchmark is claimed.
 
-### Duration presets and reporting — 2026-10-15
+### Editable duration migration — 2026-10-16
+
+With explicit user authorization, froze Duration_Minutes to stored Numeric, replaced end's guarded trigger with the UTC elapsed-minutes formula, and added raw duration to Calendar_Revision. The three changes were submitted together with the local writer stopped. All 3,769 rows retained their original input values, including all 3,764 valid endpoints, five empty intervals and every duration value. Unrelated column definitions stayed identical. Schema validation added zero columns; preparation preview proposed zero new headers or links and zero conflicts.
+
+Before migration, a disposable synthetic table verified conversion, fractional minutes, a historical DST interval and invalid-duration blanking. An interrupted fixture request was resolved by readback showing no change before retry. No interrupted live migration occurred.
+
+After migration, a disposable ALL_ATT lesson passed HTTP creation at 40 minutes, direct Grist duration=80 with calculated end, stale HTTP save rejection (409), start-only movement preserving 80, retry of the same move, fractional resizing to 45.5, metadata editing without schedule changes, soft deletion and deletion retry. Both the lesson and synthetic table were removed after identity checks. Comparing all original rows again found zero stored-input changes. These are HTTP/API observations, not pointer-drag or browser-rendering evidence.
+
+### Historical duration presets and reporting — 2026-10-15
 
 Added only the new Numeric formula Duration_Minutes to ALL_ATT. Live readback matched all 3,766 valid timestamp pairs and returned blank for five undated rows. Repeat setup added zero columns. One isolated temporary lesson verified successful 40-, 60-, 80- and custom 75-minute saves crossing school midnight, with matching formula values. A zero-length fixture interval returned blank. The probe was removed after checking its identity and origin. All 3,771 original rows remained; original input values, column definitions and active revisions were unchanged.
 
@@ -100,7 +108,7 @@ The new action menus were exercised in the demo browser, including keyboard oper
 
 ## Automated and browser checks
 
-`node scripts/check.mjs` passes JavaScript syntax checks, all **19 vendored-file hashes** and **202 automated tests**. Coverage includes ALL_ATT classification, additive preparation/resume, schema preservation, safe UUID defaults, pending bookings, reference identity, narrow schedule writes, timezone conversion, scalar conditional writes, uncertain responses, draft preservation, deletion failures/retries and concurrency, local HTTP boundaries, operation without legacy schema and the retained legacy adapter. DateRegistry coverage includes bounded/idempotent population, lost responses, concurrent duplicates, preservation of manual metadata, timezone links, safe missing-data fallback and text-only accessible UI context. Duration coverage includes additive helper validation, exclusion from revisions/writes, preset/custom transitions, timezone boundaries and failed-save draft recovery.
+`node scripts/check.mjs` passes JavaScript syntax checks, all **19 vendored-file hashes** and **219 automated tests**. Coverage includes ALL_ATT classification, additive preparation/resume, schema preservation, safe UUID defaults, pending bookings, reference identity, narrow schedule writes, timezone conversion, scalar conditional writes, uncertain responses, draft preservation, deletion failures/retries and concurrency, local HTTP boundaries, operation without legacy schema and the retained legacy adapter. DateRegistry coverage includes bounded/idempotent population, lost responses, concurrent duplicates, preservation of manual metadata, timezone links, safe missing-data fallback and text-only accessible UI context. Duration coverage includes stored-input validation and revision inclusion, calculated-end readback, fractional precision, preset/custom transitions, timezone boundaries and failed-save draft recovery. Editor conversion retains seconds/milliseconds for fractional lessons while whole-minute values retain their compact display.
 
 The earlier demo passed interactive desktop and 390px phone-width checks for dragging, resizing, selection creation, failure recovery, teacher filters/search, navigation, cancellation, checklist round-trip, draft refresh, dirty-close confirmation and focus recovery. See the browser log for the individual runs. These checks are interactive, not an automated end-to-end suite. Physical touch devices, other browser engines and browser timezone emulation remain separate verification work.
 

@@ -122,3 +122,9 @@ Expected browser checks, not observations:
 - Selecting Custom focuses End. Keyboard navigation reaches the labelled selector; its hint describes automatic end changes. Check desktop and 390px dialog layout and scrolling.
 - Refresh and a simulated failed save retain all unsaved times and the displayed duration. Saving disables the duration selector with the other inputs.
 - Perform an actual pointer resize, reopen the lesson and confirm its resulting custom duration and Grist Duration_Minutes. Controller/API tests do not establish drag geometry.
+
+## Editable Grist duration — 2026-10-16
+
+The write adapter now translates UI endpoints to stored start/Duration_Minutes, with end calculated by Grist. Live HTTP/API tests passed creation, direct Grist minutes edits, stale-save rejection, duration-preserving moves, fractional resizing, metadata-only editing, mutation retries and deletion. All isolated fixtures were removed and original inputs preserved. Historical start-only-save behavior above is superseded: start-only moves now preserve duration.
+
+Browser interaction remains unverified under the existing local-preview access restriction. In addition to the checks above, verify a fractional duration entered in Grist retains its seconds when opened, duplicated or saved after a title-only edit; then move/resize it using an actual pointer. HTTP/controller checks do not establish native datetime input behavior or drag geometry.

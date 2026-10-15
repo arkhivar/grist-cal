@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ALL_ATT_COLUMNS, ALL_ATT_REVISION_FORMULA, ALL_ATT_HELPER_COLUMNS, ALL_ATT_HELPER_FIELDS,
-  DURATION_MINUTES_COLUMN, DURATION_MINUTES_FORMULA, ensureAllAttSchema } from '../server/all-att-schema.mjs';
+  DURATION_MINUTES_COLUMN, END_COLUMN, END_FORMULA, ensureAllAttSchema } from '../server/all-att-schema.mjs';
 import { ALL_ATT_FIELDS, lessonVersion } from '../server/all-att-model.mjs';
 
 const sourceColumns = () => [
   ['start', 'DateTime:Asia/Vladivostok'], ['end', 'DateTime:Asia/Vladivostok'], ['t', 'RefList:PERFORMANCE'],
   ['student', 'RefList:FOLKS'], ['group2', 'RefList:PERFORMANCE'], ['notes', 'Text'],
-].map(([id, type]) => ({ id, fields: { type, isFormula: false, formula: id === 'end' ? '$start + 3600' : '' } }));
+].map(([id, type]) => id === 'end' ? structuredClone(END_COLUMN) : { id, fields: { type, isFormula: false, formula: '' } });
 
 function clientFor(columns) {
   const calls = [];
@@ -23,7 +23,7 @@ function clientFor(columns) {
   } };
 }
 
-test('ALL_ATT setup adds only new columns and leaves source/end trigger formulas untouched', async () => {
+test('ALL_ATT setup adds only missing columns after validating the derived end definition', async () => {
   const existing = sourceColumns();
   const before = structuredClone(existing);
   const client = clientFor(existing);
@@ -102,7 +102,7 @@ test('source type, missing column and true source formula mismatches fail before
     changedType.find(column => column.id === id).fields.type = 'Text';
     variants.push(changedType);
     const changedFormula = sourceColumns();
-    changedFormula.find(column => column.id === id).fields.isFormula = true;
+    changedFormula.find(column => column.id === id).fields.isFormula = id !== 'end';
     variants.push(changedFormula);
   }
   for (const columns of variants) {
@@ -137,7 +137,7 @@ test('scalar CAS revision covers every projected field except itself, including 
   assert.match(ALL_ATT_REVISION_FORMULA, /\$Calendar_Parent\.id/);
 });
 
-test('duration helper alone is added to an existing calendar schema without touching source triggers or UUID defaults', async () => {
+test('stored duration alone is added without changing the derived end or UID default', async () => {
   const columns = [...sourceColumns(), ...structuredClone(ALL_ATT_COLUMNS)];
   Object.assign(columns.find(column => column.id === 'Calendar_UID').fields,
     { formula: 'value or UUID()', recalcWhen: 0, recalcDeps: null });
@@ -146,29 +146,32 @@ test('duration helper alone is added to an existing calendar schema without touc
   assert.equal((await ensureAllAttSchema(client)).addedColumnCount, 1);
   assert.deepEqual(client.calls[1].body.columns, [DURATION_MINUTES_COLUMN]);
   assert.deepEqual(columns, before);
-  assert.equal(columns.find(column => column.id === 'end').fields.formula, '$start + 3600');
+  assert.equal(columns.find(column => column.id === 'end').fields.formula, END_FORMULA);
   assert.equal((await ensureAllAttSchema(client)).addedColumnCount, 0);
   assert.equal(client.calls.filter(call => call.method === 'POST').length, 1, 'Repeated setup must not rewrite the helper or other columns');
 });
 
-test('duration formula uses elapsed UTC minutes and rejects missing, invalid or nonpositive intervals', () => {
+test('duration is stored without a trigger and the end formula adds positive finite elapsed UTC minutes', () => {
   assert.equal(DURATION_MINUTES_COLUMN.id, 'Duration_Minutes');
   assert.equal(DURATION_MINUTES_COLUMN.fields.type, 'Numeric');
-  assert.equal(DURATION_MINUTES_COLUMN.fields.isFormula, true);
-  assert.equal(DURATION_MINUTES_COLUMN.fields.formula, DURATION_MINUTES_FORMULA);
-  assert.match(DURATION_MINUTES_FORMULA, /isinstance\(start_at, datetime.datetime\)/);
-  assert.match(DURATION_MINUTES_FORMULA, /isinstance\(end_at, datetime.datetime\)/);
-  assert.match(DURATION_MINUTES_FORMULA, /start_at.tzinfo is None or end_at.tzinfo is None/);
-  assert.match(DURATION_MINUTES_FORMULA, /end_at\.astimezone\(datetime.timezone.utc\) - start_at\.astimezone\(datetime.timezone.utc\)/);
-  assert.match(DURATION_MINUTES_FORMULA, /\.total_seconds\(\)/);
-  assert.match(DURATION_MINUTES_FORMULA, /return elapsed \/ 60 if elapsed > 0 else None/);
-  assert.doesNotMatch(DURATION_MINUTES_FORMULA, /round\(|int\(|Calendar_Parent|datetime\.timedelta/);
+  assert.deepEqual(DURATION_MINUTES_COLUMN.fields, { type: 'Numeric', isFormula: false });
+  assert.deepEqual(END_COLUMN, { id: 'end', fields: {
+    type: 'DateTime:Asia/Vladivostok', isFormula: true, formula: END_FORMULA,
+  } });
+  assert.match(END_FORMULA, /isinstance\(start_at, datetime.datetime\)/);
+  assert.match(END_FORMULA, /start_at.tzinfo is None/);
+  assert.match(END_FORMULA, /isinstance\(minutes, bool\) or not isinstance\(minutes, \(int, float\)\)/);
+  assert.match(END_FORMULA, /not math.isfinite\(minutes\) or minutes <= 0/);
+  assert.match(END_FORMULA, /start_at\.astimezone\(datetime.timezone.utc\) \+ datetime.timedelta\(minutes=minutes\)/);
+  assert.match(END_FORMULA, /\.astimezone\(start_at.tzinfo\)/);
+  assert.match(END_FORMULA, /except \(TypeError, ValueError, OverflowError\)/);
+  assert.doesNotMatch(END_FORMULA, /round\(|int\(|\$end|Calendar_Parent/);
 });
 
 test('unsafe existing duration definitions fail before any schema additions', async () => {
   for (const patch of [
-    { type: 'Text' }, { type: 'Int' }, { isFormula: false }, { formula: '($end - $start).seconds / 60' },
-    { formula: '60' }, { formula: '' },
+    { type: 'Text' }, { type: 'Int' }, { isFormula: true }, { formula: '($end - $start).seconds / 60' },
+    { formula: '60' }, { formula: 'value or 60', recalcWhen: 0, recalcDeps: null },
   ]) {
     const columns = [...sourceColumns(), { id: 'Duration_Minutes', fields: { ...DURATION_MINUTES_COLUMN.fields, ...patch } }];
     const before = structuredClone(columns);
@@ -179,13 +182,28 @@ test('unsafe existing duration definitions fail before any schema additions', as
   }
 });
 
-test('derived duration stays outside the 13 base columns, source projection and concurrency revision', () => {
+test('stored duration joins the source projection and concurrency revision without changing the 13 calendar columns', () => {
   assert.equal(ALL_ATT_COLUMNS.length, 13);
   assert.deepEqual(ALL_ATT_HELPER_FIELDS, ['Duration_Minutes']);
   assert.ok(!ALL_ATT_COLUMNS.some(column => column.id === 'Duration_Minutes'));
-  assert.ok(!ALL_ATT_FIELDS.includes('Duration_Minutes'));
-  assert.doesNotMatch(ALL_ATT_REVISION_FORMULA, /Duration_Minutes/);
+  assert.ok(ALL_ATT_FIELDS.includes('Duration_Minutes'));
+  assert.match(ALL_ATT_REVISION_FORMULA, /\$Duration_Minutes/);
   const source = { start: 1791864000, end: 1791867600, t: ['L', 17], student: ['L'], group2: ['L', 31] };
-  assert.equal(lessonVersion(source), lessonVersion({ ...source, Duration_Minutes: 60 }));
+  assert.notEqual(lessonVersion(source), lessonVersion({ ...source, Duration_Minutes: 60 }));
   assert.equal(lessonVersion(source), lessonVersion({ ...source, Duration_Minutes: null }));
+});
+
+test('setup rejects an old end trigger or unknown derived formula instead of migrating definitions', async () => {
+  for (const fields of [
+    { type: 'DateTime:Asia/Vladivostok', isFormula: false, formula: '$start + 3600', recalcWhen: 0, recalcDeps: ['L', 35] },
+    { type: 'DateTime:Asia/Vladivostok', isFormula: true, formula: '$start + datetime.timedelta(hours=1)' },
+  ]) {
+    const columns = sourceColumns();
+    columns.find(column => column.id === 'end').fields = fields;
+    const before = structuredClone(columns);
+    const client = clientFor(columns);
+    await assert.rejects(ensureAllAttSchema(client), /end must derive from start and Duration_Minutes/);
+    assert.deepEqual(columns, before);
+    assert.equal(client.calls.length, 1);
+  }
 });

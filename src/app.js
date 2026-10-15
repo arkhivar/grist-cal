@@ -1,4 +1,4 @@
-import { SCHOOL_TIME_ZONE, schoolToday, schoolInput, fromSchoolInput, formatSchoolTime, shiftDate, startOfWeek, selectCalendarLessons } from './domain.js';
+import { SCHOOL_TIME_ZONE, schoolToday, preciseSchoolInput, fromSchoolInput, formatSchoolTime, shiftDate, startOfWeek, selectCalendarLessons } from './domain.js';
 import { createMemoryStore } from './memory-store.js';
 import { createGristStore, readCalendarConfig } from './grist-store.js';
 import { createDateContextIndex, dateContextFor, lessonDateDescription, setDateContextText, appendDateContextLabel } from './date-context.js';
@@ -377,7 +377,7 @@ async function start() {
       referenceChoices('lesson-group-ref', snapshot.groups || [], lesson.groupIds, 'Group not assigned');
     }
     for (const input of $('lesson-form').querySelectorAll('[name]')) {
-      input.value = ['start', 'end'].includes(input.name) ? schoolInput(lesson[input.name]) : lesson[input.name] || '';
+      input.value = ['start', 'end'].includes(input.name) ? preciseSchoolInput(lesson[input.name]) : lesson[input.name] || '';
     }
     durationController = createDurationController($('lesson-start').value, $('lesson-end').value);
     renderDuration();

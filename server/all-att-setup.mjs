@@ -7,6 +7,9 @@ const REVISION = /^[a-f0-9]{64}$/i;
 const createEndpoint = '/tables/ALL_ATT/records?noupdate=true&onmany=none&noparse=true';
 const linkEndpoint = '/tables/ALL_ATT/records?noadd=true&onmany=none&noparse=true';
 const positiveId = value => Number.isSafeInteger(value) && value > 0;
+const validDuration = value => typeof value === 'number' && Number.isFinite(value) && value > 0;
+// Python timedelta rounds to microseconds; source epoch seconds are JS doubles.
+const sameEnd = (actual, expected) => validEpoch(actual) && validEpoch(expected) && Math.abs(actual - expected) <= 0.000002;
 const fieldsOf = record => record?.fields || {};
 const chunks = (values, size) => Array.from({ length: Math.ceil(values.length / size) },
   (_, index) => values.slice(index * size, (index + 1) * size));
@@ -113,18 +116,21 @@ export function buildAllAttPlan({ attendance = [], legacyLessons = [] } = {}) {
     const end = existing ? fieldsOf(existing).end : first.end;
     if (!reason && (!validEpoch(end) || end <= first.start)) reason = 'missing-or-invalid-end';
     if (!reason && !existing && children.some(child => fieldsOf(child).end !== end)) reason = 'inconsistent-group-end';
+    if (!reason && (existing ? !validDuration(fieldsOf(existing).Duration_Minutes) :
+      children.some(child => !validDuration(fieldsOf(child).Duration_Minutes)))) reason = 'missing-or-invalid-duration';
     if (!reason && fieldsOf(existing).Calendar_Status === 'deleted') reason = 'deleted-group-header';
     if (reason) {
       conflicts.push(...children.map(record => ({ id: record.id, reason })));
       continue;
     }
     candidates.push({
-      key,
+      key, expectedEnd: end,
       attendanceIds: children.map(record => record.id).sort((a, b) => a - b),
       ...(existing ? { existingHeaderId: existing.id, existingHeaderRevision: fieldsOf(existing).Calendar_Revision } : {}),
       fields: {
         Calendar_UID: existing ? fieldsOf(existing).Calendar_UID || '' : uid,
-        start: first.start, end, t: ['L', ...refs(first.t)], group2: ['L', ...refs(first.group2)], student: ['L'],
+        start: first.start, Duration_Minutes: existing ? fieldsOf(existing).Duration_Minutes : (end - first.start) / 60,
+        t: ['L', ...refs(first.t)], group2: ['L', ...refs(first.group2)], student: ['L'],
         Calendar_Status: 'scheduled', Calendar_Origin: 'all-att-group-header', Calendar_Attendance: 'pending',
       },
     });
@@ -156,7 +162,7 @@ export function buildAllAttPlan({ attendance = [], legacyLessons = [] } = {}) {
       continue;
     }
     const copied = {
-      Calendar_UID: uid, start: fields.Start, end: fields.End,
+      Calendar_UID: uid, start: fields.Start, Duration_Minutes: (fields.End - fields.Start) / 60,
       t: ['L', ...refs(fields.Teacher)], group2: ['L', ...refs(fields.Group)], student: ['L'],
       Calendar_Title: fields.Title || '', Calendar_Group_Label: fields.Group_Label || '',
       Calendar_Room: fields.Room || '', Calendar_Participants: fields.Participant_Notes || '',
@@ -164,7 +170,7 @@ export function buildAllAttPlan({ attendance = [], legacyLessons = [] } = {}) {
       Calendar_Status: ['cancelled', 'deleted'].includes(fields.Status) ? fields.Status : 'scheduled',
       Calendar_Origin: 'calendar-legacy', Calendar_Attendance: 'pending',
     };
-    candidates.push({ key: sourceKey(copied), legacyLessonId: id, attendanceIds: [], fields: copied });
+    candidates.push({ key: sourceKey(copied), expectedEnd: fields.End, legacyLessonId: id, attendanceIds: [], fields: copied });
   }
   candidates.sort((a, b) => a.fields.start - b.fields.start || a.key.localeCompare(b.key));
   skipped.sort((a, b) => a.id - b.id);
@@ -284,7 +290,8 @@ export async function prepareAllAtt({ client, onProgress = () => {}, includeLega
         throw setupError('ALL_ATT_IDENTITY_CONFLICT',
           'A preserved calendar lesson could not be resolved to exactly one header. No attendance links were attempted. Review its identity before resuming.', summary, hasWritten);
       }
-      if (Object.entries(candidate.fields).some(([field, value]) => !sameCopiedValue(field, fieldsOf(matches[0])[field], value))) {
+      if (!sameEnd(fieldsOf(matches[0]).end, candidate.expectedEnd) ||
+          Object.entries(candidate.fields).some(([field, value]) => !sameCopiedValue(field, fieldsOf(matches[0])[field], value))) {
         conflicts.push({ id: candidate.legacyLessonId, source: 'Calendar_Lessons', reason: 'preserved-legacy-lesson-changed' });
         continue;
       }
@@ -300,13 +307,14 @@ export async function prepareAllAtt({ client, onProgress = () => {}, includeLega
     }
     const header = matches[0];
     const fields = fieldsOf(header);
-    if (fields.Calendar_Status === 'deleted' || fields.end !== candidate.fields.end ||
+    if (fields.Calendar_Status === 'deleted' || !sameEnd(fields.end, candidate.expectedEnd) ||
+        fields.Duration_Minutes !== candidate.fields.Duration_Minutes ||
         (candidate.existingHeaderId && fields.Calendar_Revision !== candidate.existingHeaderRevision)) {
       conflicts.push(...candidate.attendanceIds.map(id => ({ id, reason: 'header-changed-during-preparation' })));
       summary.conflictedRowCount += candidate.attendanceIds.length;
       continue;
     }
-    expectedHeaders.set(header.id, { key: candidate.key, end: fields.end });
+    expectedHeaders.set(header.id, { key: candidate.key, end: fields.end, durationMinutes: fields.Duration_Minutes });
     for (const id of candidate.attendanceIds) expectedLinks.set(id, header.id);
   }
   summary.resolvedHeaderCount = expectedHeaders.size + summary.preservedLegacyLessonCount;
@@ -339,8 +347,10 @@ export async function prepareAllAtt({ client, onProgress = () => {}, includeLega
       conflicts.push({ id, reason: 'source-row-missing' });
     } else if (child.Calendar_Parent === parent && classifyRow(child) === 'attendance' &&
       sourceKey(child) === sourceKey(originals.get(id)) && child.end === originals.get(id).end &&
+      child.Duration_Minutes === originals.get(id).Duration_Minutes &&
       JSON.stringify(refs(child.student)) === JSON.stringify(refs(originals.get(id).student)) && header && classifyRow(header) === 'group' &&
-      sourceKey(header) === expected.key && header.end === expected.end && header.Calendar_Status !== 'deleted') {
+      sourceKey(header) === expected.key && header.end === expected.end &&
+      header.Duration_Minutes === expected.durationMinutes && header.Calendar_Status !== 'deleted') {
       summary.linkedRowCount += 1;
     } else {
       summary.conflictedRowCount += 1;

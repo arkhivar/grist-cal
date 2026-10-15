@@ -8,14 +8,23 @@ const clone = value => structuredClone(value);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const start = Date.parse('2026-10-12T23:00:00Z') / 1000;
-const row = (id, extra = {}) => ({ id, fields: {
-  start, end: start + 3600, t: ['L', 17], group2: ['L', 31], student: ['L', id],
-  Calendar_UID: '', Calendar_Parent: 0, Calendar_Status: '', Calendar_Origin: '', Calendar_Attendance: '',
-  notes: 'Private existing note', datetime: start - 900, per: ['L', 18], wage: 900, count: 1,
-  Calendar_Lesson: 700 + id, ...extra,
-} });
+const row = (id, extra = {}) => {
+  const fields = {
+    start, end: start + 3600, t: ['L', 17], group2: ['L', 31], student: ['L', id],
+    Calendar_UID: '', Calendar_Parent: 0, Calendar_Status: '', Calendar_Origin: '', Calendar_Attendance: '',
+    notes: 'Private existing note', datetime: start - 900, per: ['L', 18], wage: 900, count: 1,
+    Calendar_Lesson: 700 + id, ...extra,
+  };
+  if (!Object.hasOwn(extra, 'Duration_Minutes')) fields.Duration_Minutes =
+    typeof fields.start === 'number' && typeof fields.end === 'number' ? (fields.end - fields.start) / 60 : null;
+  return { id, fields };
+};
+const derivedEnd = fields => typeof fields.start === 'number' && Number.isFinite(fields.start) &&
+  typeof fields.Duration_Minutes === 'number' && Number.isFinite(fields.Duration_Minutes) && fields.Duration_Minutes > 0
+  ? fields.start + fields.Duration_Minutes * 60 : null;
 
 function mockClient({ attendance = [row(1), row(2)], beforeWrite, afterWrite, beforeRead, invalidRevision = false,
+  deriveEnd = derivedEnd,
   legacyLessons = [{ id: 701, fields: { Title: 'Legacy lesson', Start: start } }] } = {}) {
   const tables = { ALL_ATT: clone(attendance), Calendar_Lessons: clone(legacyLessons) };
   const reads = [];
@@ -24,6 +33,7 @@ function mockClient({ attendance = [row(1), row(2)], beforeWrite, afterWrite, be
   const recalculate = () => {
     for (const record of tables.ALL_ATT) {
       record.fields.Calendar_Parent ??= 0;
+      record.fields.end = deriveEnd(record.fields);
       record.fields.Calendar_Revision = invalidRevision ? '' : hash(ALL_ATT_FIELDS.filter(field => field !== 'Calendar_Revision')
         .map(field => record.fields[field] ?? null));
     }
@@ -47,6 +57,7 @@ function mockClient({ attendance = [row(1), row(2)], beforeWrite, afterWrite, be
       const params = new URLSearchParams(endpoint.split('?')[1]);
       const result = { recordIds: [], addRecordIds: [], updateRecordIds: [] };
       for (const operation of body.records) {
+        assert.ok(!Object.hasOwn(operation.fields, 'end'), 'Formula end must never be written.');
         assert.ok(Object.values(operation.require).every(value => !Array.isArray(value)), 'RefLists cannot be CAS lookup predicates.');
         const matches = tables.ALL_ATT.filter(record => Object.entries(operation.require)
           .every(([field, value]) => same(field === 'id' ? record.id : record.fields[field], value)));
@@ -84,6 +95,9 @@ test('planning uses the confirmed row kinds and exact start plus sorted teacher/
   assert.deepEqual(grouped.fields.t, ['L', 17, 18]);
   assert.deepEqual(grouped.fields.group2, ['L', 31, 32]);
   assert.deepEqual(grouped.fields.student, ['L']);
+  assert.equal(grouped.fields.Duration_Minutes, 60);
+  assert.equal(grouped.expectedEnd, start + 3600);
+  assert.ok(!Object.hasOwn(grouped.fields, 'end'));
   assert.match(grouped.fields.Calendar_UID, /^all-att-group:[a-f0-9]{64}$/);
   assert.equal(plan.summary.individualLessonCount, 1);
   assert.equal(plan.summary.existingGroupHeaderCount, 1);
@@ -97,6 +111,14 @@ test('missing and inconsistent ends are reported instead of inventing lesson dur
     assert.equal(plan.candidates.length, 0);
     assert.equal(plan.conflicts.length, children.length);
     assert.ok(plan.conflicts.every(conflict => /end/.test(conflict.reason)));
+  }
+});
+
+test('invalid stored source durations do not create headers from stale end values', () => {
+  for (const Duration_Minutes of [undefined, null, 0, -1, Infinity, '60']) {
+    const plan = buildAllAttPlan({ attendance: [row(1, { Duration_Minutes })] });
+    assert.equal(plan.candidates.length, 0);
+    assert.deepEqual(plan.conflicts, [{ id: 1, reason: 'missing-or-invalid-duration' }]);
   }
 });
 
@@ -124,6 +146,8 @@ test('preparation creates one header and changes only new parent links on preexi
   const header = mock.tables.ALL_ATT[2];
   assert.equal(header.fields.Calendar_Origin, 'all-att-group-header');
   assert.equal(header.fields.Calendar_Attendance, 'pending');
+  assert.equal(header.fields.Duration_Minutes, 60);
+  assert.equal(header.fields.end, start + 3600);
   assert.deepEqual(header.fields.student, ['L']);
   for (let i = 0; i < 2; i += 1) {
     const { Calendar_Revision: beforeRevision, ...before } = original.ALL_ATT[i].fields;
@@ -210,7 +234,7 @@ test('lost create and link responses stop without retries and resume using stabl
 });
 
 test('conditional links preserve concurrent edits to dates, references, calendar data and existing parents', async () => {
-  const changes = [{ start: start + 3600 }, { end: start + 5400 }, { t: ['L', 99] },
+  const changes = [{ start: start + 3600 }, { Duration_Minutes: 90 }, { t: ['L', 99] },
     { group2: ['L', 32] }, { student: ['L', 99] }, { Calendar_Parent: 999 }, { Calendar_Status: 'cancelled' }];
   const mock = mockClient({ attendance: Array.from({ length: 8 }, (_, i) => row(i + 1)),
     beforeWrite({ endpoint, tables }) {
@@ -313,6 +337,8 @@ test('optional legacy preparation preserves standalone scheduling metadata and i
   assert.equal(copied.fields.Calendar_Room, 'Room 2');
   assert.equal(copied.fields.Calendar_Notes, 'Saved lesson note');
   assert.equal(copied.fields.Calendar_Participants, 'Manual participants');
+  assert.equal(copied.fields.Duration_Minutes, 30);
+  assert.equal(copied.fields.end, start + 9000);
   assert.deepEqual(copied.fields.t, ['L', 17, 18]);
   assert.deepEqual(copied.fields.student, ['L']);
   assert.deepEqual(mock.tables.Calendar_Lessons, legacyLessons);
@@ -381,4 +407,35 @@ test('legacy readback rejects malformed reference values instead of treating the
     assert.equal(result.preservedLegacyLessonCount, 0);
     assert.equal(result.conflicts[0].reason, 'preserved-legacy-lesson-changed');
   }
+});
+
+test('fractional durations are copied without rounding and derived-end readback precedes attendance linking', async () => {
+  const duration = 45.1234567;
+  const source = row(1, { end: start + duration * 60 });
+  const mock = mockClient({ attendance: [source] });
+  const result = await prepareAllAtt({ client: mock.client });
+  assert.equal(result.status, 'complete');
+  const header = mock.tables.ALL_ATT.at(-1).fields;
+  assert.equal(header.Duration_Minutes, (source.fields.end - source.fields.start) / 60);
+  assert.equal(header.end, source.fields.end);
+  assert.equal(result.linkedRowCount, 1);
+  assert.equal(mock.tables.ALL_ATT[0].fields.Duration_Minutes, source.fields.Duration_Minutes);
+
+  for (const offset of [0.000001, 0.01]) {
+    const checked = mockClient({ deriveEnd: fields => derivedEnd(fields) + (fields.Calendar_Origin === 'all-att-group-header' ? offset : 0) });
+    const checkedResult = await prepareAllAtt({ client: checked.client });
+    assert.equal(checkedResult.status, offset < 0.000002 ? 'complete' : 'partial');
+    assert.equal(checkedResult.linkedRowCount, offset < 0.000002 ? 2 : 0);
+    assert.equal(checked.writes.filter(write => write.endpoint.includes('noadd=true')).length, offset < 0.000002 ? 1 : 0);
+  }
+});
+
+test('legacy copy readback verifies the formula end rather than trusting the written duration', async () => {
+  const mock = mockClient({ attendance: [], legacyLessons: [{ id: 701, fields: {
+    Origin: 'calendar', Start: start, End: start + 2700.5, Teacher: ['L'], Group: ['L'],
+  } }], deriveEnd: fields => derivedEnd(fields) + 60 });
+  const result = await prepareAllAtt({ client: mock.client, includeLegacyCalendar: true });
+  assert.equal(result.status, 'partial');
+  assert.equal(result.preservedLegacyLessonCount, 0);
+  assert.deepEqual(result.conflicts, [{ id: 701, source: 'Calendar_Lessons', reason: 'preserved-legacy-lesson-changed' }]);
 });

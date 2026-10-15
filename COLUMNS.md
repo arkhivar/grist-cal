@@ -1,6 +1,6 @@
 # Column decisions
 
-Updated: 2026-10-15 (Asia/Vladivostok).
+Updated: 2026-10-16 (Asia/Vladivostok).
 
 This is the running decision log for the Grist data model. Record a column's purpose, owner, write rules, status and reason for keeping or changing it here as we discuss it. **Implemented** describes the current application, **accepted** describes an agreed contract, **legacy** means retained but unused by the active calendar, and **proposed** does not authorize a schema change. Keep verification evidence separate from design intentions.
 
@@ -8,14 +8,14 @@ This is the running decision log for the Grist data model. Record a column's pur
 
 `ALL_ATT` holds both lessons and attendance. An empty `student` reference identifies a group header; a student with empty `group2` identifies an individual lesson in the same row; a student with nonempty `group2` identifies attendance only. Individual lessons do not require a second lesson row. Calendar events use stable `all-att:<row ID>` identities.
 
-Existing column definitions and input values are protected unless the user explicitly authorizes a specific change. Lesson edits may update `start`, `end` and `t`. Adding calendar columns is authorized. Cleanup of redundant legacy columns requires a later dependency review and decision; an unused calendar field may still serve another widget.
+Existing column definitions and input values are protected unless the user explicitly authorizes a specific change. The user approved the editable-duration migration on 2026-10-16: lesson writes now target `start`, `Duration_Minutes` and `t`; `end` is derived. Adding calendar columns is authorized. Further cleanup requires dependency review and a decision; an unused calendar field may still serve another widget.
 
 ## Current columns
 
 | Column | Purpose and write rules | Status / decision |
 | --- | --- | --- |
-| `start`, `end` | Canonical lesson times; DateTime in Asia/Vladivostok. The app exchanges UTC ISO instants and Grist stores epoch seconds. Calendar edits may update these cells. | Accepted; retain existing definitions, including the end trigger. |
-| `Duration_Minutes` | Read-only Numeric formula: elapsed UTC minutes between valid start/end values; blank for missing, invalid or nonpositive intervals. | Implemented reporting helper. No independent duration write or revision dependency. |
+| `start`, `end` | Start is stored DateTime; End is a read-only DateTime formula adding Duration_Minutes in UTC. Both display Asia/Vladivostok. The app exchanges UTC ISO instants and Grist stores epoch seconds. | Implemented and live-verified 2026-10-16. Calendar saves never write formula End. |
+| `Duration_Minutes` | Stored editable Numeric input. No automatic Grist default; calendar creation supplies its chosen length. Positive fractional/custom lengths are preserved. | Authoritative schedule input included in projections, writes and revisions. Invalid/missing/nonpositive values produce blank End. |
 | `t` | Canonical teacher reference list. Preserve missing/multiple references. Calendar edits may change the teacher. | Accepted. |
 | `student`, `group2` | Classify rows and identify students/groups. Existing references are read-only in the editor; new individual lessons select exactly one student and no group. | Accepted. |
 | `Calendar_Parent` | Ref:ALL_ATT from a group attendance row to its particular group lesson header. Individual attendance belongs to its own row. | Accepted; the day registry does not replace this lesson link. |
@@ -41,7 +41,17 @@ Keep all other Calendar_* columns: 13 base fields are required by the current ad
 
 The optional `--include-legacy-calendar` path still targets the deleted table and should no longer be used. Normal startup/default setup do not use it. The audit and proposed sequence below describe the state **before the user deleted the table**, including differences then identified; they do not assert that archival/reconciliation was completed.
 
-## End time and duration — implemented 2026-10-15
+## Editable duration — implemented 2026-10-16
+
+The user approved stored `start` + editable `Duration_Minutes` → calculated `end`. Typing 80 in Grist moves End to Start + 80 minutes; changing Start preserves duration. The calendar retains its existing start/end editor and gesture contract: the adapter translates resizing or End edits into a duration write. Schedule writes include the mutation and use the existing conditional revision check. Duration now participates in revisions so direct Grist changes invalidate stale drafts. End readback checks the calculated result, including after lost responses.
+
+The migration freezes the existing calculated durations before changing End, preserving every valid historical endpoint and blank undated row. It applies to attendance rows as well as lesson rows because Grist column definitions cover the entire table. Moving a group header still leaves child attendance schedules alone. The former end default/trigger is replaced; new calendar lessons still default to 60 minutes or the selected range, while new rows entered directly in Grist require a duration.
+
+Live migration preserved all 3,769 original rows: 3,764 valid start/end intervals and five wholly undated rows. All original stored inputs and duration values remained identical; only the three authorized definitions (duration, end, revision) changed. A separate synthetic table verified freezing values, fractional minutes and historical DST. Disposable ALL_ATT tests verified calendar creation, direct duration edits, stale-save rejection, duration-preserving moves, fractional resizing, metadata edits, retry and deletion. All fixtures were removed and original inputs compared again. See [STATE.md](docs/STATE.md).
+
+Calendar_Origin retirement is separately authorized; it remains required until the preparation safeguard, projection, write verification and revision dependencies are replaced and verified.
+
+### Historical duration helper — implemented 2026-10-15, superseded by the migration above
 
 Live inspection confirms `end` is a **stored DateTime data column**, not a continuously calculated formula column. Its trigger is `value or ($start + datetime.timedelta(hours=1) if $start else None)` (with `import datetime`). It applies to new records and has start as a trigger dependency. The value guard preserves a nonempty end; the one-hour calculation fills a missing value. An explicit calendar save can store any valid supported end time. Grist's [trigger-formula documentation](https://support.getgrist.com/formulas/#trigger-formulas) explains this editable-default behavior.
 

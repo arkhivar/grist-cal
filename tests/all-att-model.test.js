@@ -5,7 +5,7 @@ import { ALL_ATT_FIELDS, refs, classifyRow, lessonFields, lessonVersion, normali
 const start = Date.parse('2026-10-12T23:00:00Z') / 1000;
 const record = (id, fields) => ({ id, fields });
 const row = (id, extra = {}) => record(id, {
-  start, end: start + 3600, t: ['L', 17], student: ['L', 1], group2: ['L'], notes: '', ...extra,
+  start, end: start + 3600, Duration_Minutes: 60, t: ['L', 17], student: ['L', 1], group2: ['L'], notes: '', ...extra,
 });
 const header = (id, extra = {}) => row(id, { student: ['L'], group2: ['L', 31], ...extra });
 const child = (id, parent = 10, extra = {}) => row(id, { group2: ['L', 31], Calendar_Parent: parent, ...extra });
@@ -100,6 +100,25 @@ test('epoch conversion and latest date use Vladivostok even across UTC and schoo
   assert.equal(result.lessons[0].end, '2026-10-12T14:30:00.000Z');
   assert.equal(result.lessons[1].start, '2026-10-12T23:00:00.000Z');
   assert.equal(result.meta.latestLessonDate, '2026-10-13');
+});
+
+test('stored fractional duration stays exact and missing or invalid durations never display stale end times', () => {
+  const durationMinutes = 45.1234567;
+  const valid = row(1, { Duration_Minutes: durationMinutes, end: start + durationMinutes * 60 });
+  const invalid = [undefined, null, '', '60', 0, -1, NaN, Infinity, false].map((duration, index) =>
+    row(index + 2, { Duration_Minutes: duration }));
+  const result = normalize([valid, ...invalid]);
+  assert.deepEqual(result.lessons.map(lesson => [lesson.id, lesson.durationMinutes]), [['all-att:1', durationMinutes]]);
+  assert.equal(result.meta.invalidLessons.length, invalid.length);
+  assert.equal(result.attendance.length, invalid.length + 1, 'Invalid scheduling does not erase recorded attendance');
+  assert.equal(lessonFields({}).Duration_Minutes, null);
+  assert.notEqual(lessonVersion(valid), lessonVersion({ ...valid.fields, Duration_Minutes: durationMinutes + 0.0000001 }));
+});
+
+test('epoch conversion rounds fractional-second floating arithmetic to the UI millisecond boundary', () => {
+  const end = start + 60.007 - 0.0000002;
+  const result = normalize([row(1, { end, Duration_Minutes: (end - start) / 60 })]);
+  assert.equal(result.lessons[0].end, '2026-10-12T23:01:00.007Z');
 });
 
 test('missing and multiple teachers remain explicit and deterministic; option catalogs expose only names', () => {
