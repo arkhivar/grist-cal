@@ -22,8 +22,8 @@ Existing column definitions and input values are protected unless the user expli
 | `Calendar_UID` | Stored creation/retry identity. The app supplies an ID before creating a row, so retrying a lost response finds that same row. Preparation also uses deterministic IDs. | Accepted shared identifier column; new rows entered directly in Grist may receive a UUID default. See the identity decision below. |
 | `Calendar_Revision` | Formula fingerprint of protected scheduling, reference and calendar fields. Atomic saves compare it to detect concurrent changes, including direct Grist edits. | Implemented; retain this protection. A stable UUID cannot replace a revision. |
 | `Calendar_Mutation` | Identifies a particular save/delete operation so its retry can recognize an already completed write. | Implemented; retain separately from permanent identity. |
-| `Calendar_Source_Revision` | Concurrency helper used by the former attendance importer. | Removal recommended after the user's table deletion; unused by the active calendar/default preparation. Remove first because its formula still reads Calendar_Lesson. |
-| `Calendar_Lesson` | Former reference to the deleted Calendar_Lessons table; Grist converted it to Int, retaining old row numbers. | Removal recommended after Calendar_Source_Revision. No current lesson/attendance relationship uses these integers. |
+| `Calendar_Source_Revision` | Former attendance-import concurrency helper. | Removed by the user on 2026-10-15; absence verified by API. |
+| `Calendar_Lesson` | Former reference to Calendar_Lessons, briefly converted to Int when that table was deleted. | Removed by the user on 2026-10-15; absence verified by API. Calendar_Parent remains the active lesson link. |
 | `Calendar_Status` | Scheduled, cancelled or deleted. Soft deletion preserves the row and attendance links. | Implemented; delete writes this and Calendar_Mutation only. |
 | `Calendar_Attendance` | Separates bookings from recorded attendance. New bookings are pending; existing blank values are shown neutrally as recorded. | Implemented; attendance remains read-only in the calendar. |
 | `Calendar_Origin` | Identifies calendar-created rows, prepared group headers and copied legacy lessons. | Implemented; used in safe preparation/recovery. |
@@ -34,11 +34,21 @@ The user deleted `Calendar_Lessons` on 2026-10-15; a fresh API read confirms it 
 
 ### Check after the user's table deletion — 2026-10-15
 
-Both obsolete ALL_ATT columns remain. Calendar_Lesson is now Int with 3,211 nonempty old IDs; Calendar_Source_Revision still refers to `$Calendar_Lesson.id`. Across all 18 remaining tables, the only formula mentioning either obsolete column is Calendar_Source_Revision itself. Neither is used by the active adapter, revision formula or default setup. **Recommended manual cleanup: delete Calendar_Source_Revision, then Calendar_Lesson.** No live columns were deleted or changed by this check.
+At the first check, both obsolete ALL_ATT columns remained. Calendar_Lesson had become Int with 3,211 nonempty old IDs; Calendar_Source_Revision still referred to `$Calendar_Lesson.id` and was the only formula mentioning either obsolete field across the remaining tables. Removal was recommended in that order: source revision, then old link. **The user subsequently removed both columns; a fresh API read confirms their absence.** No live columns were deleted or changed by the assistant during these checks.
 
 Keep all other Calendar_* columns: 13 base fields are required by the current adapter, and Calendar_Date serves the shared date registry. Calendar_Parent continues to link attendance to current ALL_ATT lessons and must remain. The fresh live snapshot succeeds with 2,817 lessons, 3,209 attendance entries and an available date registry; all active revision values are valid hashes. ALL_ATT currently contains 3,771 rows. These are current observed counts, not a claim that no user edits occurred since the previous audit.
 
 The optional `--include-legacy-calendar` path still targets the deleted table and should no longer be used. Normal startup/default setup do not use it. The audit and proposed sequence below describe the state **before the user deleted the table**, including differences then identified; they do not assert that archival/reconciliation was completed.
+
+## End time and duration review — 2026-10-15
+
+Live inspection confirms `end` is a **stored DateTime data column**, not a continuously calculated formula column. Its trigger is `value or ($start + datetime.timedelta(hours=1) if $start else None)` (with `import datetime`). It applies to new records and has start as a trigger dependency. The value guard preserves a nonempty end; the one-hour calculation fills a missing value. An explicit calendar save can store any valid supported end time. Grist's [trigger-formula documentation](https://support.getgrist.com/formulas/#trigger-formulas) explains this editable-default behavior.
+
+Changing only start directly in Grist therefore leaves an existing end intact; it does not preserve duration automatically. Calendar dragging updates both endpoints to preserve duration; resizing changes end. The current editor exposes independent start/end controls. New lessons default to 60 minutes unless a selected range supplies an end. These are distinct editing behaviors, not a requirement that every lesson lasts one hour.
+
+Recommendation, **proposed and not implemented**: keep start/end canonical and add an editor duration control (for example 45/60/90/custom minutes) that calculates end and saves the two timestamps. This requires no extra stored Grist column. If reporting/filtering in Grist needs duration, add a read-only Numeric `Duration_Minutes` derived from the elapsed difference between valid start/end instants; leave missing/invalid ranges blank and keep the formula outside lesson concurrency fields. That column does not exist yet.
+
+An alternative start + editable duration model is viable if direct Grist duration entry becomes the priority. Then end would be derived, and the adapter, editor, preparation and validation would need a deliberate coordinated migration. Do not make start, end and duration independently editable without a defined update rule. No end definition, scheduling value, duration column or UI behavior was changed during this review.
 
 ## Calendar-created schema — retirement audit 2026-10-15
 
