@@ -1,6 +1,6 @@
 # Actual state
 
-Updated: 2026-10-14 (Asia/Vladivostok).
+Updated: 2026-10-15 (Asia/Vladivostok).
 
 ## Foundation and interface
 
@@ -18,15 +18,34 @@ The default mode remains an in-memory demo with invented records, delayed writes
 
 A server-side Grist adapter now supports persistent lesson creation, editing, moving, resizing, cancellation and soft deletion. Credentials remain in the Node process. The browser receives a normalized scheduling snapshot and read-only attendance, not the key or unrelated financial columns. The server binds to loopback and checks local Host, Origin and request tokens.
 
-Duplicate and Delete are available from an event's right-click/Shift+F10 menu and the editor's **⋯** menu. Duplicate opens an unsaved scheduled copy with copied details/checklist, a new identity and no attendance. Delete confirms first, then writes only `Status=deleted` and a mutation ID. The Grist row and attendance links remain, and all calendar views hide the event. Failed or stale deletes keep it visible. Recovery is available by changing the status in Grist; there is no in-app undo.
+Duplicate and Delete are available from an event's right-click/Shift+F10 menu and the editor's **⋯** menu. Duplicate opens an unsaved scheduled copy with copied details/checklist, a new identity and no attendance. Delete confirms first, then writes only `Calendar_Status=deleted` and `Calendar_Mutation`. The Grist row and attendance links remain, and all calendar views hide the event. Failed or stale deletes keep it visible. Recovery is available by changing the status in Grist; there is no in-app undo.
 
-`Calendar_Lessons` is the event source. `ALL_ATT.Calendar_Lesson` links attendance to its lesson. Multi-teacher references remain intact, incomplete teacher references display as Unassigned, and attendance rows with missing students remain attendance. Connected attendance displays a neutral Recorded status without inferring presence from notes, counts or wages.
+`ALL_ATT` is now the event and attendance source. Under the user's current rule, an empty `student` cell identifies a group header; a student with empty `group2` identifies one individual lesson and its attendance in the same row; a student with a group identifies attendance only. Group attendance links through `Calendar_Parent` to a header in the same table. `Calendar_Lessons` and its old links remain untouched and are unused by the active adapter.
 
-Setup and import are explicit commands. A normal server start performs neither. Setup adds missing schema and rejects incompatible existing definitions. The importer uses deterministic lesson identities, conditional links and readback verification, and can resume after an interruption. Partially imported lessons remain hidden until at least one attendance row links to them. See [GRIST.md](GRIST.md) for configuration and the precise grouping rule.
+Calendar edits update the existing `start`, `end` and `t` cells as authorized. Other scheduling details use new calendar fields. Moving a group header does not rewrite its children's dates or teachers. Individual edits change their own attendance row, so existing formulas can recalculate. New bookings use `Calendar_Attendance=pending` and do not count as recorded attendance. Existing attendance is displayed neutrally without inferring presence from notes, counts or wages.
+
+The live editor offers group/individual type and student/group references for new lessons and duplicates. Existing type and student/group references are read-only; freeform group labels remain editable. Missing and multiple references remain explicit. Pending individual bookings can be found by student name.
+
+Setup and group preparation are explicit commands. A normal server start performs neither. Setup adds missing schema and rejects incompatible existing definitions. Preparation uses deterministic header identities, conditional links and readback verification, and can resume after an interruption. Preparation-created headers remain hidden until at least one attendance row links to them. See [GRIST.md](GRIST.md) for configuration and the precise grouping rule.
 
 ## Live sandbox verification
 
-The initial integration checks on 2026-10-13 established:
+### Current ALL_ATT model — 2026-10-15
+
+- Added 13 calendar columns without deleting or changing any preexisting column definition, including the existing `end` trigger formula.
+- Kept 2,260 individual lessons in their original rows. Added 553 missing group headers, reused one existing header, and linked all 948 group attendance rows through `Calendar_Parent`.
+- Copied two standalone legacy calendar-created lessons into ALL_ATT, retaining their scheduling details. Empty reference lists were verified semantically because Grist returns empty lists as null. The entire former `Calendar_Lessons` table is unchanged.
+- Repeated preparation completed with zero new headers, zero link writes and zero conflicts; the two copied legacy lessons were reused.
+- Compared every original non-formula input column across all 3,215 original rows. All values remained unchanged except Grist's automatic `Last_updated_at` on the 948 linked rows. No original rows were removed.
+- After temporary probes were removed, ALL_ATT contained 3,770 rows: 2,817 visible lessons and 3,208 linked student attendance rows, with no unlinked attendance. Five existing rows lack valid scheduling times and remain excluded from events.
+- Live HTTP/API checks on four isolated temporary rows verified individual creation in one row, pending attendance, idempotent create retry, start-only editing without changing the existing end, direct `start`/`end`/`t` readback, group movement preserving child inputs, duplication without copied/reassigned attendance, cancellation, soft deletion, delete retry and HTTP 409 for stale edits and resurrection attempts.
+- Delete readback changed only the two intended input fields, plus the automatic timestamp and new revision formula. All four probe rows were removed after checking their unique identities and origins; original input preservation and the old calendar table were checked again afterward.
+
+The new editor controls and adapter have not had a fresh interactive browser check: browser access was blocked under the tool's URL policy. The API checks above establish live persistence, not rendered interaction. Full-history reads remain; no 50k/100k performance benchmark has been performed.
+
+### Historical separate-table adapter
+
+The following checks describe the former `Calendar_Lessons` adapter, not the current ALL_ATT behavior. The initial integration checks on 2026-10-13 established:
 
 - Imported **2,731 lessons** and linked **3,206 of 3,211 attendance rows**. The remaining **5 rows have no date** and remain unlinked. Both temporary verification lessons were removed after their identities and origin were checked.
 - A rerun planned **0 new lessons and 0 new attendance links**.
@@ -44,7 +63,7 @@ The new action menus were exercised in the demo browser, including keyboard oper
 
 ## Automated and browser checks
 
-`node scripts/check.mjs` passes JavaScript syntax checks, all **19 vendored-file hashes** and **99 automated tests**. Coverage includes timezone conversion, record identity, import grouping/resume, scalar conditional writes, changing source data, uncertain responses, draft preservation, soft-deletion failures/retries and concurrency, local HTTP boundaries and protection against accidental field writes.
+`node scripts/check.mjs` passes JavaScript syntax checks, all **19 vendored-file hashes** and **155 automated tests**. Coverage includes the new ALL_ATT classification, additive preparation/resume, schema preservation, pending bookings, reference identity, narrow schedule writes, timezone conversion, scalar conditional writes, uncertain responses, draft preservation, deletion failures/retries and concurrency, local HTTP boundaries and the retained legacy adapter.
 
 The earlier demo passed interactive desktop and 390px phone-width checks for dragging, resizing, selection creation, failure recovery, teacher filters/search, navigation, cancellation, checklist round-trip, draft refresh, dirty-close confirmation and focus recovery. See the browser log for the individual runs. These checks are interactive, not an automated end-to-end suite. Physical touch devices, other browser engines and browser timezone emulation remain separate verification work.
 
@@ -52,4 +71,4 @@ GitHub Actions runs the repository checks on pushes and pull requests. Passing l
 
 ## Next
 
-Review the connected calendar against real scheduling workflows, particularly imported one-hour durations and group labels. Recurrence, teacher authentication, production permission enforcement and deployment remain future work. Grist Cloud is still a development sandbox; production operations continue in SeaTable. Authentik, NetBird and Puppet remain candidates for the eventual self-hosted teacher pilot.
+Review the single-table calendar in practical scheduling workflows and complete browser checks for the new editor controls. Keep legacy tables/fields until a separate redundancy-cleanup decision. Date-range loading and realistic scale measurements remain pending. Recurrence, teacher authentication, production permission enforcement and deployment remain future work. Grist Cloud is still a development sandbox; production operations continue in SeaTable. Authentik, NetBird and Puppet remain candidates for the eventual self-hosted teacher pilot.

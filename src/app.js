@@ -39,7 +39,7 @@ async function start() {
   document.title = `Grist Cal · ${isLive ? sourceLabel : 'Demo'}`;
   for (const id of ['mode-badge', 'context-mode', 'editor-mode']) $(id).textContent = isLive ? 'Live' : 'Demo';
   $('data-label').textContent = sourceLabel;
-  $('data-description').textContent = isLive ? 'Edits save to your Grist sandbox and remain after reload.' : 'Fictional lessons. Changes last until you reset or reload.';
+  $('data-description').textContent = isLive ? 'Lessons and attendance use ALL_ATT. Edits remain after reload.' : 'Fictional lessons. Changes last until you reset or reload.';
   $('mode-card').setAttribute('aria-label', isLive ? 'Grist connection and refresh' : 'Demo controls');
   $('reset-button').hidden = isLive;
   $('demo-tools').hidden = isLive;
@@ -99,6 +99,7 @@ async function start() {
     $('lesson-actions').disabled = value || refreshing;
     // Freeze form inputs during submission so a late keystroke cannot be silently lost.
     for (const input of $('lesson-form').querySelectorAll('input,select,textarea')) input.disabled = value;
+    if (isLive && editor) syncLessonIdentity();
   }
 
   function armFailure() {
@@ -246,7 +247,36 @@ async function start() {
   }
 
   function rawDraft() {
-    return Object.fromEntries(Array.from($('lesson-form').querySelectorAll('[name]'), input => [input.name, input.value]));
+    const draft = Object.fromEntries(Array.from($('lesson-form').querySelectorAll('[name]'), input => [input.name, input.value]));
+    if (isLive) {
+      draft.lessonKind = $('lesson-kind').value;
+      draft.studentIds = draft.lessonKind === 'individual' ? JSON.parse($('lesson-student').value || '[]') : [];
+      draft.groupIds = draft.lessonKind === 'group' ? JSON.parse($('lesson-group-ref').value || '[]') : [];
+    }
+    return draft;
+  }
+
+  function referenceChoices(id, choices, selectedIds, placeholder) {
+    const select = $(id);
+    const selected = [...(selectedIds || [])].sort();
+    const options = [{ ids: [], name: placeholder }, ...choices.map(item => ({ ids: [item.id], name: item.name }))];
+    // Preserve existing combinations and missing references without silently substituting a person/group.
+    if (selected.length && !options.some(option => JSON.stringify(option.ids) === JSON.stringify(selected))) {
+      options.push({ ids: selected, name: selected.map(ref => choices.find(item => item.id === ref)?.name || ref).join(' + ') });
+    }
+    select.innerHTML = options.map(option => `<option value="${escape(JSON.stringify(option.ids))}">${escape(option.name)}</option>`).join('');
+    select.value = JSON.stringify(selected);
+  }
+
+  function syncLessonIdentity() {
+    if (!isLive) return;
+    const individual = $('lesson-kind').value === 'individual';
+    $('lesson-student-field').hidden = !individual;
+    $('lesson-group-ref-field').hidden = individual;
+    for (const id of ['lesson-kind', 'lesson-student', 'lesson-group-ref']) $(id).disabled = busy || Boolean(editor?.id);
+    $('lesson-identity-hint').textContent = editor?.id
+      ? 'The lesson type and student/group links are kept when editing. Scheduling changes do not mark attendance.'
+      : individual ? 'Choose one student. Booking this lesson does not record attendance.' : 'Choose a group, or leave it unassigned. Attendance can be linked later.';
   }
 
   function isDirty() { return editor && JSON.stringify(rawDraft()) !== editor.initial; }
@@ -278,7 +308,7 @@ async function start() {
       const notes = typeof row.notes === 'string' ? row.notes : '';
       const source = row.sourceRowId != null ? `<span class="attendance-source">ALL_ATT row ${escape(row.sourceRowId)}</span>` : '';
       return `<div class="attendance-row"><span class="student-avatar" aria-hidden="true">${escape(name.split(' ').map(s => s[0]).slice(0, 2).join(''))}</span><div class="attendance-name">${escape(name)}${!row.studentId ? '<span class="attendance-note">Student link pending</span>' : ''}${source}${notes ? `<span class="attendance-note">${escape(notes)}</span>` : ''}</div><span class="attendance-status" data-status="${escape(row.status)}">${escape(statuses[row.status] || 'Not marked')}</span></div>`;
-    }).join('') : `<div class="empty-attendance">${isLive ? 'No linked attendance records in ALL_ATT. Saving this lesson does not create or mark student attendance.' : 'No student attendance entries yet. Saving this lesson creates its calendar record.'}</div>`;
+    }).join('') : `<div class="empty-attendance">${isLive ? 'No attendance has been recorded for this lesson yet. Saving a booking does not mark attendance.' : 'No student attendance entries yet. Saving this lesson creates its calendar record.'}</div>`;
   }
 
   function openEditor(lessonId, range = {}, duplicate) {
@@ -299,6 +329,13 @@ async function start() {
     $('lesson-actions').hidden = !existing;
     $('editor-version').textContent = isLive ? 'Saves to Grist' : existing ? 'Changes stay in this demo' : 'One lesson · one calendar event';
     $('lesson-teacher').innerHTML = snapshot.teachers.map(t => `<option value="${escape(t.id)}">${escape(t.name)}</option>`).join('');
+    $('lesson-identity-fields').hidden = !isLive;
+    document.querySelector('label[for="lesson-group"]').textContent = isLive ? 'Group label (optional)' : 'Group';
+    if (isLive) {
+      $('lesson-kind').value = lesson.lessonKind || 'group';
+      referenceChoices('lesson-student', snapshot.students || [], lesson.studentIds, 'Choose a student');
+      referenceChoices('lesson-group-ref', snapshot.groups || [], lesson.groupIds, 'Group not assigned');
+    }
     for (const input of $('lesson-form').querySelectorAll('[name]')) {
       input.value = ['start', 'end'].includes(input.name) ? schoolInput(lesson[input.name]) : lesson[input.name] || '';
     }
@@ -310,6 +347,7 @@ async function start() {
     }
     renderAttendance(existing?.id);
     editor = { id: existing?.id, clientId: crypto.randomUUID(), version: existing?.version, initial: JSON.stringify(rawDraft()) };
+    syncLessonIdentity();
     closeMobileSidebar();
     $('lesson-dialog').showModal();
     $('lesson-title').focus();
@@ -688,6 +726,7 @@ async function start() {
   $('sidebar-backdrop').addEventListener('click', closeMobileSidebar);
   mobile.addEventListener('change', syncSidebar);
   $('lesson-form').addEventListener('submit', saveEditor);
+  $('lesson-kind').addEventListener('change', syncLessonIdentity);
   $('close-editor').addEventListener('click', requestCloseEditor);
   $('cancel-editor').addEventListener('click', requestCloseEditor);
   $('lesson-dialog').addEventListener('cancel', event => { event.preventDefault(); void requestCloseEditor(); });

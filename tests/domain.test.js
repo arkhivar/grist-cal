@@ -84,3 +84,12 @@ test('event selection excludes deleted lessons even from an unfiltered snapshot'
   assert.ok(!selectCalendarLessons(snapshot, { search: deleted.title }).some(lesson => lesson.id === deleted.id));
   assert.ok(selectCalendarLessons(snapshot).some(lesson => lesson.id === cancelled.id));
 });
+
+test('student search includes a pending individual booking without creating attendance', () => {
+  const data = createDemoData('2026-10-13');
+  const pending = { ...data.lessons[0], title: 'Preparation lesson', studentNames: ['Synthetic New Student'] };
+  const snapshot = { ...data, lessons: [pending], attendance: [] };
+  assert.equal(selectCalendarLessons(snapshot, { search: 'synthetic new student' }).length, 1);
+  assert.equal(snapshot.attendance.length, 0);
+  assert.equal(selectCalendarLessons(snapshot, { teacherIds: [], search: 'synthetic new student' }).length, 0);
+});

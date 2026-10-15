@@ -81,3 +81,18 @@ Implemented Hide all / Show all and the teacher-row **Display this only** menu. 
 - Opening or dismissing a teacher menu does not toggle its checkbox. Enter/Space and arrow keys open the menu; Escape restores focus; Tab continues through the sidebar controls. On a phone, Escape closes the menu before a subsequent Escape closes the drawer.
 - At 390px, the menu button is visible without hover. Menus fit within the viewport and close on scroll, resize, outside click or sidebar dismissal.
 - Refresh preserves Hide all and solo selection. Reset restores all teachers and the sample week. Existing lesson Duplicate/Delete menus still open and dismiss correctly.
+
+## ALL_ATT model transition — 2026-10-15
+
+The local Grist server now uses ALL_ATT for both lesson events and attendance. Earlier live browser checks above describe the former separate-table adapter. **Fresh interactive browser verification is pending** because the browser tool rejected local preview access under its URL policy; no alternate browser route was used.
+
+Separate live HTTP/API checks against four disposable ALL_ATT rows verified:
+
+- Individual creation uses one row with pending attendance; repeating the same create returns that row.
+- Start-only edits preserve the existing end despite its trigger formula. Schedule and teacher edits update the canonical `start`, `end` and `t` cells.
+- Group movement preserves a linked child's scheduling inputs and explicit parent link.
+- Duplicate creates a fresh scheduled lesson with copied manual checklist and no copied or reassigned attendance.
+- Cancellation and soft deletion preserve attendance. Deletion hides the event; repeating its mutation succeeds; stale editing and resurrection attempts return HTTP 409.
+- Temporary rows were removed after checking their unique identities and origins. Original input cells remain unchanged except automatic timestamps on rows linked during preparation. The old Calendar_Lessons table is unchanged.
+
+Pending browser checks: create a group and individual lesson using the new selectors; verify existing student/group references remain read-only; duplicate and change a copied reference; search a pending individual booking by student name; check dirty-draft recovery, keyboard focus and 390px layout with the added controls. Dragging/resizing needs another real-browser check against this adapter before claiming it has passed.

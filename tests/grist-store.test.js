@@ -129,14 +129,14 @@ test('SQL storage RefLists decode only in known reference columns, preserving JS
     fetchImpl: async url => {
       const query = new URL(url).searchParams.get('q');
       if (query.includes('"ALL_ATT"')) return Response.json({ records: [{ fields: {
-        id: 55, student: '[1377]', per: '[18]', group2: '[33]', notes: '[18]', Calendar_Lesson: 7,
+        id: 55, student: '[1377]', per: '[18]', t: '[17,18]', group2: '[33]', notes: '[18]', Calendar_Lesson: 7,
       } }] });
       if (query.includes('"FOLKS"')) return Response.json({ records: [{ fields: { id: 1377, name: '[18]' } }] });
       return Response.json({ records: [{ fields: { id: 7, Teacher: '[18,17]', Group: '[]', Title: '[18]' } },
         { fields: { id: 8, Teacher: null, Group: null, Title: 'Empty refs' } }] });
     } });
-  assert.deepEqual(await client.records('ALL_ATT', ['student', 'per', 'group2', 'notes', 'Calendar_Lesson']),
-    [{ id: 55, fields: { student: ['L', 1377], per: ['L', 18], group2: ['L', 33], notes: '[18]', Calendar_Lesson: 7 } }]);
+  assert.deepEqual(await client.records('ALL_ATT', ['student', 'per', 't', 'group2', 'notes', 'Calendar_Lesson']),
+    [{ id: 55, fields: { student: ['L', 1377], per: ['L', 18], t: ['L', 17, 18], group2: ['L', 33], notes: '[18]', Calendar_Lesson: 7 } }]);
   assert.deepEqual(await client.records('FOLKS', ['name']), [{ id: 1377, fields: { name: '[18]' } }]);
   assert.deepEqual(await client.records('Calendar_Lessons', ['Teacher', 'Group', 'Title']), [
     { id: 7, fields: { Teacher: ['L', 18, 17], Group: ['L'], Title: '[18]' } },

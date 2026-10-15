@@ -3,7 +3,7 @@ const sleep = (milliseconds) => new Promise(resolve => setTimeout(resolve, milli
 // SQL exposes stored RefLists as JSON integer arrays, while the records API uses ['L', ...ids].
 // Only the reviewed reference columns are decoded: notes and names may themselves contain JSON text.
 const REFERENCE_LIST_FIELDS = {
-  ALL_ATT: new Set(['student', 'per', 'group2']),
+  ALL_ATT: new Set(['student', 'per', 't', 'group2']),
   Calendar_Lessons: new Set(['Teacher', 'Group']),
 };
 

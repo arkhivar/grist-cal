@@ -81,6 +81,14 @@
       <div class="dialog-heading"><div><span class="eyebrow" id="editor-eyebrow">LESSON</span><h2 id="editor-heading">Edit lesson</h2></div><div><button type="button" id="lesson-actions" class="icon-button" aria-label="Lesson actions" aria-haspopup="menu" aria-controls="lesson-menu" aria-expanded="false" title="Lesson actions" hidden><svg class="icon"><use href="#i-more"/></svg></button><button type="button" id="refresh-editor" class="icon-button" aria-label="Refresh lesson data" title="Refresh data; keep your draft"><svg class="icon"><use href="#i-reset"/></svg></button><button type="button" id="close-editor" class="icon-button" aria-label="Close lesson editor"><svg class="icon"><use href="#i-close"/></svg></button></div></div>
       <div class="dialog-scroll">
         <div class="form-field title-field"><label for="lesson-title">Lesson title</label><input id="lesson-title" name="title" placeholder="e.g. English · A2" required maxlength="160" autocomplete="off"></div>
+        <div id="lesson-identity-fields" hidden>
+          <div class="form-row">
+            <div class="form-field"><label for="lesson-kind">Lesson type</label><select id="lesson-kind"><option value="group">Group lesson</option><option value="individual">Individual lesson</option></select></div>
+            <div id="lesson-student-field" class="form-field" hidden><label for="lesson-student">Student</label><select id="lesson-student"></select></div>
+            <div id="lesson-group-ref-field" class="form-field"><label for="lesson-group-ref">Group</label><select id="lesson-group-ref"></select></div>
+          </div>
+          <p id="lesson-identity-hint" class="field-hint"></p>
+        </div>
         <div class="form-row"><div class="form-field"><label for="lesson-teacher">Teacher</label><select id="lesson-teacher" name="teacherId" required></select></div><div class="form-field"><label for="lesson-group">Group</label><input id="lesson-group" name="group" placeholder="e.g. Young explorers" maxlength="120"></div></div>
         <fieldset class="time-fields"><legend><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>School time · Vladivostok (UTC+10)</legend><div class="form-row"><div class="form-field"><label for="lesson-start">Starts</label><input id="lesson-start" name="start" type="datetime-local" step="60" required></div><div class="form-field"><label for="lesson-end">Ends</label><input id="lesson-end" name="end" type="datetime-local" step="60" required></div></div></fieldset>
         <div class="form-row"><div class="form-field"><label for="lesson-room">Room</label><input id="lesson-room" name="room" placeholder="Room or meeting link" maxlength="120"></div><div class="form-field"><label for="lesson-status">Status</label><select id="lesson-status" name="status"><option value="scheduled">Scheduled</option><option value="cancelled">Cancelled</option></select></div></div>

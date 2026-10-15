@@ -109,6 +109,7 @@ export function selectCalendarLessons(snapshot, { teacherIds, search = '' } = {}
     if (!query) return true;
     const searchable = [lesson.title, lesson.group, lesson.room, lesson.participantText,
       lesson.checklist, lesson.notes, teacherNames.get(lesson.teacherId),
+      ...(lesson.studentNames || []),
       ...(studentNames.get(lesson.id) || [])];
     return searchable.filter(Boolean).join(' ').toLocaleLowerCase().includes(query);
   });
