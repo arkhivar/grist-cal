@@ -225,6 +225,59 @@ test('registry fallback does not suppress errors reading the actual attendance s
   assert.equal(client.writes.length, 0);
 });
 
+test('snapshot, create, edit and delete work with the entire legacy lesson schema absent', async () => {
+  const client = mockClient();
+  delete client.tables.Calendar_Lessons;
+  const legacyFields = ['Calendar_Lesson', 'Calendar_Source_Revision'];
+  for (const row of client.tables.ALL_ATT) for (const field of legacyFields) delete row.fields[field];
+  const originalRows = clone(client.tables.ALL_ATT);
+  const read = client.records.bind(client);
+  const write = client.request.bind(client);
+  const legacyAccesses = [];
+  client.records = async (table, fields) => {
+    if (table === 'Calendar_Lessons' || fields.some(field => legacyFields.includes(field))) {
+      legacyAccesses.push({ operation: 'read', table, fields });
+      throw new Error('The retired lesson table and reference columns do not exist.');
+    }
+    return read(table, fields);
+  };
+  client.request = async (method, endpoint, body) => {
+    const keys = (body?.records || []).flatMap(record => [...Object.keys(record.require || {}), ...Object.keys(record.fields || {})]);
+    if (endpoint.includes('Calendar_Lessons') || keys.some(field => legacyFields.includes(field))) {
+      legacyAccesses.push({ operation: 'write', method, endpoint, keys });
+      throw new Error('Writes cannot restore or depend on retired schema.');
+    }
+    return write(method, endpoint, body);
+  };
+  const store = createAllAttStore({ client });
+  const initial = await store.getSnapshot();
+  assert.equal(initial.lessons.length, 2);
+  assert.ok(initial.attendance.some(record => record.lessonId === 'all-att:7'));
+  const created = await store.saveLesson({ ...freshDraft(), lessonKind: 'individual', studentIds: ['folks:31'] },
+    { mutationId: MUTATION });
+  assert.equal(created.id, 'all-att:57');
+  assert.equal((await store.getSnapshot()).lessons.length, 3);
+  const edited = await store.saveLesson({ ...created, title: 'Edited after retiring old schema', teacherId: 'per:18',
+    start: '2026-10-15T10:15:00+10:00', end: '2026-10-15T11:15:00+10:00' },
+  { expectedVersion: created.version, mutationId: OTHER_MUTATION });
+  assert.equal(edited.start, '2026-10-15T00:15:00.000Z');
+  assert.equal(edited.teacherId, 'per:18');
+  const refreshed = await store.getSnapshot();
+  assert.equal(refreshed.lessons.find(lesson => lesson.id === created.id).title, edited.title);
+  assert.deepEqual(await store.deleteLesson(edited.id,
+    { expectedVersion: edited.version, mutationId: ORIGINAL_MUTATION }), { id: edited.id });
+  const final = await store.getSnapshot();
+  assert.deepEqual(final.lessons.map(lesson => lesson.id), initial.lessons.map(lesson => lesson.id));
+  assert.deepEqual(final.attendance, initial.attendance);
+  assert.deepEqual(client.tables.ALL_ATT.slice(0, originalRows.length), originalRows);
+  assert.equal(client.tables.ALL_ATT.at(-1).fields.Calendar_Status, 'deleted');
+  assert.equal(client.tables.ALL_ATT.at(-1).fields.Calendar_Attendance, 'pending');
+  assert.ok(client.tables.ALL_ATT.every(row => legacyFields.every(field => !Object.hasOwn(row.fields, field))));
+  assert.equal(Object.hasOwn(client.tables, 'Calendar_Lessons'), false);
+  assert.equal(client.writes.length, 3);
+  assert.deepEqual(legacyAccesses, []);
+});
+
 test('ALL_ATT lesson edits write existing start/end/t and new calendar fields only', async () => {
   const client = mockClient();
   const store = createAllAttStore({ client });

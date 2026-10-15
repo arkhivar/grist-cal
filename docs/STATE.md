@@ -70,6 +70,8 @@ The cleanup plan identifies date, day and hasDate as three gross ALL_ATT candida
 
 ### Historical separate-table adapter
 
+Retirement readiness was audited on 2026-10-15 after DateRegistry integration. The active adapter's snapshot/create/edit/delete also pass a regression with Calendar_Lessons, Calendar_Lesson and Calendar_Source_Revision absent. A read-only live audit found 2,733 legacy rows; both standalone copies match their ALL_ATT counterparts. All 2,731 imports resolve through retained links to current lessons, with 46 mapping to multiple targets. One marked import has differing old/current scheduling values; reconciliation or archival remains necessary before deletion. Document dependencies and removal order are recorded in [COLUMNS.md](../COLUMNS.md). No live data or schema changed in this audit. The checks below remain historical evidence, not approval to discard unresolved differences.
+
 The following checks describe the former `Calendar_Lessons` adapter, not the current ALL_ATT behavior. The initial integration checks on 2026-10-13 established:
 
 - Imported **2,731 lessons** and linked **3,206 of 3,211 attendance rows**. The remaining **5 rows have no date** and remain unlinked. Both temporary verification lessons were removed after their identities and origin were checked.
@@ -88,7 +90,7 @@ The new action menus were exercised in the demo browser, including keyboard oper
 
 ## Automated and browser checks
 
-`node scripts/check.mjs` passes JavaScript syntax checks, all **19 vendored-file hashes** and **187 automated tests**. Coverage includes ALL_ATT classification, additive preparation/resume, schema preservation, safe UUID defaults, pending bookings, reference identity, narrow schedule writes, timezone conversion, scalar conditional writes, uncertain responses, draft preservation, deletion failures/retries and concurrency, local HTTP boundaries and the retained legacy adapter. DateRegistry coverage includes bounded/idempotent population, lost responses, concurrent duplicates, preservation of manual metadata, timezone links, safe missing-data fallback and text-only accessible UI context.
+`node scripts/check.mjs` passes JavaScript syntax checks, all **19 vendored-file hashes** and **188 automated tests**. Coverage includes ALL_ATT classification, additive preparation/resume, schema preservation, safe UUID defaults, pending bookings, reference identity, narrow schedule writes, timezone conversion, scalar conditional writes, uncertain responses, draft preservation, deletion failures/retries and concurrency, local HTTP boundaries, operation without legacy schema and the retained legacy adapter. DateRegistry coverage includes bounded/idempotent population, lost responses, concurrent duplicates, preservation of manual metadata, timezone links, safe missing-data fallback and text-only accessible UI context.
 
 The earlier demo passed interactive desktop and 390px phone-width checks for dragging, resizing, selection creation, failure recovery, teacher filters/search, navigation, cancellation, checklist round-trip, draft refresh, dirty-close confirmation and focus recovery. See the browser log for the individual runs. These checks are interactive, not an automated end-to-end suite. Physical touch devices, other browser engines and browser timezone emulation remain separate verification work.
 

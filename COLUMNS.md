@@ -22,8 +22,8 @@ Existing column definitions and input values are protected unless the user expli
 | `Calendar_UID` | Stored creation/retry identity. The app supplies an ID before creating a row, so retrying a lost response finds that same row. Preparation also uses deterministic IDs. | Accepted shared identifier column; new rows entered directly in Grist may receive a UUID default. See the identity decision below. |
 | `Calendar_Revision` | Formula fingerprint of protected scheduling, reference and calendar fields. Atomic saves compare it to detect concurrent changes, including direct Grist edits. | Implemented; retain this protection. A stable UUID cannot replace a revision. |
 | `Calendar_Mutation` | Identifies a particular save/delete operation so its retry can recognize an already completed write. | Implemented; retain separately from permanent identity. |
-| `Calendar_Source_Revision` | Concurrency helper used by the former attendance importer. | Legacy; candidate for later retirement after checking other consumers. |
-| `Calendar_Lesson` | Former reference from attendance to Calendar_Lessons. | Legacy; retain unchanged for now. |
+| `Calendar_Source_Revision` | Concurrency helper used by the former attendance importer. | Primary retirement candidate; unused by the active calendar/default preparation. Remove before Calendar_Lesson because its formula reads that link. |
+| `Calendar_Lesson` | Former reference from attendance to Calendar_Lessons. | Primary retirement candidate; retain until the old-to-current lesson crosswalk and archival/reconciliation are complete. |
 | `Calendar_Status` | Scheduled, cancelled or deleted. Soft deletion preserves the row and attendance links. | Implemented; delete writes this and Calendar_Mutation only. |
 | `Calendar_Attendance` | Separates bookings from recorded attendance. New bookings are pending; existing blank values are shown neutrally as recorded. | Implemented; attendance remains read-only in the calendar. |
 | `Calendar_Origin` | Identifies calendar-created rows, prepared group headers and copied legacy lessons. | Implemented; used in safe preparation/recovery. |
@@ -31,6 +31,47 @@ Existing column definitions and input values are protected unless the user expli
 | Original `notes`, financial inputs and formula definitions | Existing attendance and parallel salaries functionality. | Preserve; do not infer attendance from payments or notes. |
 
 The former `Calendar_Lessons` table is retained and unused by the active adapter. The obsolete standalone `UUID` column was removed by the user on 2026-10-15; the selected shared column is `Calendar_UID`.
+
+## Calendar-created schema — retirement audit 2026-10-15
+
+The user asked to prioritize retiring calendar-created schema. **Calendar_Lessons is not part of the intended final design.** The primary cleanup package is the whole old table plus ALL_ATT.Calendar_Lesson and ALL_ATT.Calendar_Source_Revision. The active calendar already operates without them; no replacement columns are needed. The user's date/day/hasDate helpers remain optional later consolidation work.
+
+This was a read-only live audit plus a local regression test. No Grist columns, tables or records were changed or deleted. A retirement recommendation is separate from executing deletion.
+
+### Application readiness
+
+The active adapter's read/write projection and current revision formula omit both obsolete ALL_ATT fields. Default setup/preparation omit them and do not recreate the old table. A regression with the legacy table and both fields absent passes snapshot, create, schedule/teacher edit and soft deletion, preserving original lessons and attendance. Explicit guards reject attempted legacy access. This establishes adapter independence, not complete external-widget migration.
+
+Explicit `--include-legacy-calendar` still reads the old table; retire this optional migration path when dropping it. The old importer/store/schema remain historical code. Do not delete `grist-model.mjs` blindly: the current model imports its `refs()` helper. Source cleanup must extract that shared helper or retain the library.
+
+### Live audit findings
+
+- Calendar_Lessons contains **2,733 rows: 2,731 attendance imports and two standalone calendar lessons**. Each standalone lesson has exactly one deterministic ALL_ATT copy; all mapped scheduling/display fields match.
+- Every imported lesson has retained source attendance links resolving to current lessons: 2,685 have one target; 46 have multiple targets under the changed grouping model. No linked source row lacks a resolvable target. A blind one-to-one migration would be incorrect.
+- Imported rows have no nonempty Room, Participant_Notes, Checklist or Notes values, and all retain scheduled status. **One has an edit marker and Start/End values differing from its current ALL_ATT target.** The audit does not establish which version should prevail. Reconcile or archive the difference before deleting; never overwrite canonical times automatically.
+- Reconstructing old grouping from current start/t and retained links matches 2,712 stored import keys; 19 do not match. Among matched keys, 554 generated Title/Group_Label values differ from current catalog-derived labels. These differences do not prove either version is authoritative. The former datetime/per columns are absent in the current document, so their original contents cannot be reconstructed from those columns. Preserve old values in a recovery copy before retirement.
+- Across 19 tables and 192 column definitions, the only direct typed reference to the old table is Calendar_Lesson; the only matching formula is Calendar_Source_Revision reading that link. No table summary or explicit matching ACL rule was found.
+- Each obsolete ALL_ATT field appears in six view-section field entries. The old table has three sections, including one user-page section; its Teacher display helper is internal. No matching saved-filter, sort or section-link dependency was found in inspected metadata. Views need cleanup; external widgets/scripts and dynamic references still require review.
+
+### Prepared removal sequence
+
+1. Preserve a recoverable copy of the old table and attendance-link crosswalk outside the repository. No school-data backup was created or committed by this audit.
+2. Resolve the marked scheduling difference; decide whether other differences need migration or archival. Recheck both standalone copies and external consumers while the old links remain available.
+3. Retire the optional legacy migration path and remaining consumers; update affected views.
+4. Remove **Calendar_Source_Revision**, then **Calendar_Lesson**, then **Calendar_Lessons**. The formula goes before its reference. Dropping the old table removes its own columns/helpers and records, not ALL_ATT attendance.
+5. Verify live snapshot, create/edit/delete and attendance counts, then record the actual deletion here. Until authorized and executed, the live legacy schema remains present.
+
+### Other calendar-created fields
+
+| Fields | Decision |
+| --- | --- |
+| Calendar_UID, Calendar_Revision, Calendar_Mutation | Keep: creation/retry identity, concurrent-edit protection and operation retry identity serve separate purposes. |
+| Calendar_Parent, Calendar_Status, Calendar_Attendance | Keep: specific lesson links, cancellation/deletion state and pending-versus-recorded attendance. |
+| Calendar_Origin | Keep for now: it hides unlinked preparation headers and distinguishes origins for recovery. |
+| Calendar_Title, Calendar_Group_Label, Calendar_Room, Calendar_Participants, Calendar_Checklist, Calendar_Notes | Future consolidation candidates, not direct deletions. Choose authoritative replacements, preserve content, and adapt the projection, editor/save mapping, setup validator and revision formula together. Freeform group labels differ from references; calendar notes are not automatically attendance notes. |
+| Calendar_Date | Keep for the shared date registry/reporting contract. It is derived and excluded from scheduling writes/revisions. |
+
+All 13 current base Calendar_* fields are required by today's adapter/schema/revision contract. Blank cells do not make their columns safe to drop; deliberate consolidation can reduce them after equivalent behavior is defined.
 
 ## Identity decision — 2026-10-15
 
