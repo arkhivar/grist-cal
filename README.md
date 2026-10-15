@@ -44,6 +44,7 @@ Demo changes last only in the current tab's memory. Connected changes remain aft
 
 ## Project notes
 
+- [Column decisions and proposed schema changes](COLUMNS.md)
 - [Plan and accepted decisions](docs/PLAN.md)
 - [First implementation task](docs/FIRST_TASK.md)
 - [Actual state and verification](docs/STATE.md)

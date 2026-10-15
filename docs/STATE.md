@@ -43,6 +43,16 @@ Setup and group preparation are explicit commands. A normal server start perform
 
 The new editor controls and adapter have not had a fresh interactive browser check: browser access was blocked under the tool's URL policy. The API checks above establish live persistence, not rendered interaction. Full-history reads remain; no 50k/100k performance benchmark has been performed.
 
+### UUID default and column decision log — 2026-10-15
+
+The user consolidated their former UUID column into Calendar_UID. Inspection found a regular `UUID()` formula, which had replaced the deterministic preparation IDs. A read-only preparation preview would have copied two legacy lessons again; no duplicate copies were made.
+
+With explicit user approval, Calendar_UID was converted to a Text data column with a new-record-only UUID default and no change dependencies. Conversion preserved all 3,770 values, then 553 group preparation keys and two legacy-copy keys were restored using conditional revision checks. The other 3,215 IDs stayed unchanged. Calendar_UID was the only changed column definition. All other existing input values remained unchanged except automatic Last_updated_at values on the 555 repaired rows; revision formulas recalculated as expected.
+
+Two disposable live API probes verified generation of an omitted UUID, stability after ordinary edits, preservation of a calendar-supplied UUID and return of the same row on a repeated create. The initial interrupted probe create was checked by readback before proceeding; it had produced no record. Both probes were removed after identity checks. Read-only schema validation accepts the repaired definition; the final preparation preview proposes zero headers or links, reuses both legacy copies and reports zero conflicts. The snapshot retains 2,817 lessons and 3,208 attendance entries.
+
+The local validator now narrowly accepts supported new-record-only Calendar_UID defaults, with tests rejecting regular formulas and unsafe trigger settings. [COLUMNS.md](../COLUMNS.md) records current column roles, this repair and a proposed shared DateRegistry. The date registry remains a design proposal; no date table, links or formatting migration was implemented. There were no new browser interaction checks for this change.
+
 ### Historical separate-table adapter
 
 The following checks describe the former `Calendar_Lessons` adapter, not the current ALL_ATT behavior. The initial integration checks on 2026-10-13 established:
@@ -63,7 +73,7 @@ The new action menus were exercised in the demo browser, including keyboard oper
 
 ## Automated and browser checks
 
-`node scripts/check.mjs` passes JavaScript syntax checks, all **19 vendored-file hashes** and **155 automated tests**. Coverage includes the new ALL_ATT classification, additive preparation/resume, schema preservation, pending bookings, reference identity, narrow schedule writes, timezone conversion, scalar conditional writes, uncertain responses, draft preservation, deletion failures/retries and concurrency, local HTTP boundaries and the retained legacy adapter.
+`node scripts/check.mjs` passes JavaScript syntax checks, all **19 vendored-file hashes** and **158 automated tests**. Coverage includes the new ALL_ATT classification, additive preparation/resume, schema preservation, safe UUID defaults, pending bookings, reference identity, narrow schedule writes, timezone conversion, scalar conditional writes, uncertain responses, draft preservation, deletion failures/retries and concurrency, local HTTP boundaries and the retained legacy adapter.
 
 The earlier demo passed interactive desktop and 390px phone-width checks for dragging, resizing, selection creation, failure recovery, teacher filters/search, navigation, cancellation, checklist round-trip, draft refresh, dirty-close confirmation and focus recovery. See the browser log for the individual runs. These checks are interactive, not an automated end-to-end suite. Physical touch devices, other browser engines and browser timezone emulation remain separate verification work.
 

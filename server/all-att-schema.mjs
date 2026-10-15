@@ -19,6 +19,16 @@ const SOURCE_COLUMNS = [
   ['t', 'RefList:PERFORMANCE'], ['student', 'RefList:FOLKS'], ['group2', 'RefList:PERFORMANCE'], ['notes', 'Text'],
 ];
 
+function isUidDefault(columnId, fields) {
+  // Grist schema.py: DEFAULT (0) runs on new records and on recalcDeps changes.
+  // With no dependencies, explicitly supplied client/preparation IDs stay intact.
+  const emptyDependencies = fields.recalcDeps === null ||
+    (Array.isArray(fields.recalcDeps) && fields.recalcDeps.length === 1 && fields.recalcDeps[0] === 'L');
+  const formula = typeof fields.formula === 'string' ? fields.formula.trim() : '';
+  return columnId === 'Calendar_UID' && fields.type === 'Text' && fields.isFormula === false &&
+    fields.recalcWhen === 0 && emptyDependencies && ['UUID()', 'value or UUID()'].includes(formula);
+}
+
 /** Explicit setup validates everything first and only adds missing Calendar_* columns. */
 export async function ensureAllAttSchema(client) {
   const current = await client.request('GET', `/tables/${ALL_ATT_TABLE}/columns`);
@@ -40,7 +50,7 @@ export async function ensureAllAttSchema(client) {
     if (!existing) missing.push(column);
     else if (existing.type !== column.fields.type || Boolean(existing.isFormula) !== column.fields.isFormula
       || (column.fields.isFormula && existing.formula !== column.fields.formula)
-      || (!column.fields.isFormula && Boolean(existing.formula))) {
+      || (!column.fields.isFormula && Boolean(existing.formula) && !isUidDefault(column.id, existing))) {
       throw new Error(`ALL_ATT calendar schema mismatch: ${column.id}. Existing columns were not modified.`);
     }
   }

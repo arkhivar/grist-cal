@@ -74,6 +74,8 @@ The 13 added columns are:
 
 Exact types and the revision formula are defined in [`server/all-att-schema.mjs`](../server/all-att-schema.mjs). Setup validates the existing `start`/`end` timezone, reference types and editability; it retains existing trigger formulas. True formula columns cannot accept scheduling edits, so an incompatible source definition stops setup.
 
+Calendar_UID may be a plain Text data column or use a new-record-only default of `UUID()` or `value or UUID()`, with no record-change dependencies. Explicitly supplied calendar/preparation IDs must remain stored unchanged. A regular formula column or a change-trigger configuration is rejected. Setup preserves the accepted existing definition and does not convert columns automatically. See [COLUMNS.md](../COLUMNS.md) for the identity decision and the proposed shared date registry.
+
 The former `Calendar_Lessons` table, `ALL_ATT.Calendar_Lesson` links and legacy revision fields remain intact. The active adapter does not use them. Removing or consolidating redundant fields is a later decision after practical validation.
 
 ## Prepare group headers and links explicitly

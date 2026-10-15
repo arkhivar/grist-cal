@@ -43,6 +43,55 @@ test('ALL_ATT schema setup is idempotent and does not alter unrelated legacy col
   assert.equal(client.calls.length, 1);
 });
 
+test('Calendar_UID accepts only a preserved data-column UUID default for new records', async () => {
+  for (const formula of ['UUID()', 'value or UUID()', '  UUID()\n']) {
+    for (const recalcDeps of [null, ['L']]) {
+      const columns = [...sourceColumns(), ...structuredClone(ALL_ATT_COLUMNS)];
+      Object.assign(columns.find(column => column.id === 'Calendar_UID').fields,
+        { formula, recalcWhen: 0, recalcDeps });
+      const before = structuredClone(columns);
+      const client = clientFor(columns);
+      assert.equal((await ensureAllAttSchema(client)).addedColumnCount, 0);
+      assert.equal(client.calls.length, 1, 'Accepted definitions must not be rewritten');
+      assert.deepEqual(columns, before);
+    }
+  }
+});
+
+test('an accepted Calendar_UID default is preserved when other calendar columns are added', async () => {
+  const columns = [...sourceColumns(), { id: 'Calendar_UID', fields: {
+    type: 'Text', isFormula: false, formula: 'UUID()', recalcWhen: 0, recalcDeps: null,
+  } }];
+  const before = structuredClone(columns);
+  const client = clientFor(columns);
+  assert.equal((await ensureAllAttSchema(client)).addedColumnCount, ALL_ATT_COLUMNS.length - 1);
+  assert.deepEqual(client.calls[1].body.columns, ALL_ATT_COLUMNS.filter(column => column.id !== 'Calendar_UID'));
+  assert.deepEqual(columns, before);
+  assert.deepEqual(ALL_ATT_COLUMNS.find(column => column.id === 'Calendar_UID').fields,
+    { type: 'Text', isFormula: false }, 'Default schema remains an ordinary writable data column');
+});
+
+test('Calendar_UID rejects formula columns and unknown or record-change trigger settings before schema writes', async () => {
+  const base = { type: 'Text', isFormula: false, formula: 'UUID()', recalcWhen: 0, recalcDeps: null };
+  for (const patch of [
+    { isFormula: true }, { type: 'Any' }, { formula: 'UUID() + "changed"' },
+    { recalcWhen: 1 }, { recalcWhen: 2 }, { recalcWhen: undefined }, { recalcWhen: null }, { recalcWhen: '0' },
+    { recalcDeps: ['L', 41] }, { recalcDeps: [41] }, { recalcDeps: undefined }, { recalcDeps: '[]' },
+    { formula: 'value or UUID()', recalcDeps: ['L', 42] },
+    { formula: 'value or UUID()', recalcWhen: 2 },
+  ]) {
+    const columns = [...sourceColumns(), { id: 'Calendar_UID', fields: { ...base, ...patch } }];
+    const before = structuredClone(columns);
+    const client = clientFor(columns);
+    await assert.rejects(ensureAllAttSchema(client), /calendar schema mismatch: Calendar_UID/);
+    assert.equal(client.calls.length, 1);
+    assert.deepEqual(columns, before);
+  }
+  const client = clientFor([...sourceColumns(), { id: 'Calendar_Title', fields: base }]);
+  await assert.rejects(ensureAllAttSchema(client), /calendar schema mismatch: Calendar_Title/);
+  assert.equal(client.calls.length, 1, 'UUID default exception is limited to Calendar_UID');
+});
+
 test('source type, missing column and true source formula mismatches fail before any schema writes', async () => {
   const variants = [sourceColumns().filter(column => column.id !== 't')];
   for (const id of ['start', 'end', 't', 'student', 'group2']) {
