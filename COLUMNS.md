@@ -158,7 +158,24 @@ The app reads the registry once per snapshot and joins metadata by the lesson's 
 
 Missing, duplicate or unreadable registry metadata never hides a valid lesson. Snapshot metadata reports aggregate coverage/ambiguity; this is not yet a user-facing maintenance dashboard. Date metadata and Calendar_Date are excluded from lesson revisions, so changing a term label does not invalidate an open scheduling draft. Demo behavior is unchanged without registry metadata.
 
-### Concrete ALL_ATT cleanup candidates — not deleted
+### Concrete cleanup audit — 2026-10-16, no live changes
+
+Fresh inspection covered all 18 document tables and their column definitions, view fields, saved filters, section links/sorts and ACL metadata. The active calendar does not read ALL_ATT.date, day or hasDate. All 3,764 dated ALL_ATT rows currently have a registry link; their date and short weekday values match DateRegistry.Date and the first three characters of DateRegistry.Day. This equivalence is verified for current data, not an assumption about dates outside registry coverage.
+
+Saved section options/filter specifications contained no matching helper-field grouping/filter references; no section had an embedId. The local arkhivar/grist widget source was inspected read-only. Salaries prefers a date helper for default monthly grouping when present but can fall back to start using Vladivostok month boundaries; day and hasDate are not hardcoded requirements. It consumes summary group RefLists, so replacing the native summary still requires preserving its selection links. Generic saved grouping/sorting/filter preferences can reference arbitrary fields, and removing such fields can change those preferences. This audit covers the current document and local source, not uninspected external integrations or private browser filters.
+
+| Field | Current decision | Evidence / prerequisite |
+| --- | --- | --- |
+| `ALL_ATT.hasDate` | Safe to remove within the audited document/calendar contract. | Formula is bool(start); no formula, reference-display, summary, filter, sort, link or ACL dependency found. It appears as a displayed field in 11 view sections, which will lose that column. |
+| `ALL_ATT.date` | Keep until consumers are migrated. | Calendar_Parent uses it as its reference display, the start column's today-highlighting rule reads it, and ALL_ATT_summary_date_day2 groups by it. Also displayed in 10 view sections. |
+| `ALL_ATT.day` | Keep until the summary is migrated. | ALL_ATT_summary_date_day2 groups by it. Also displayed in 10 view sections. The registry weekday is a full name; the old helper is abbreviated. |
+| `DateRegistry.A`, `B`, `C` | Safe to remove within the audited document/calendar contract. | Empty default Any/formula columns; all cells blank across 3,653 rows, no relevant formula/typed-reference/summary/filter/sort/link/ACL consumer. Each appears in three view sections. Unrelated PERFORMANCE.C references are not dependencies on DateRegistry.C. |
+
+Before removing date/day, change Calendar_Parent's visible value and the today rule, and rebuild the date/day summary around Calendar_Date with weekday derived from the registry. Preserve its source-row group references, counts, row styling and any selection links used by widgets. Missing/duplicate/out-of-range registry dates still need an explicit fallback or maintenance policy. Do not simply delete the grouping columns from the existing summary.
+
+The remaining 12 base Calendar_* fields are all required by the current editor/adapter/revision/schema contract. Calendar_Group_Label is a possible future simplification because referenced group names already provide a fallback; an ordinary custom Calendar_Title could remain the override. Calendar_Participants is freeform participant text, not attendance references, and could be folded into Calendar_Notes if that separate UI field is unwanted. These are proposed feature/schema changes, not deletion approvals. All four fields currently have zero nonempty values; blank values do not remove their code dependencies. Preserve original attendance notes (2,868 nonempty rows), student/group references, room, manual checklist, scheduling state and concurrency identities.
+
+### Original registry cleanup proposal — historical
 
 | Existing field | Replacement after migration | Work required before deletion |
 | --- | --- | --- |
