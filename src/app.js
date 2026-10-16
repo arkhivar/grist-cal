@@ -3,6 +3,7 @@ import { createMemoryStore } from './memory-store.js';
 import { createGristStore, readCalendarConfig } from './grist-store.js';
 import { createDateContextIndex, dateContextFor, lessonDateDescription, setDateContextText, appendDateContextLabel } from './date-context.js';
 import { createDurationController } from './duration.js';
+import { getTeacherChoices } from './teacher-choices.js';
 
 const $ = (id) => document.getElementById(id);
 const escape = (value = '') => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -356,10 +357,15 @@ async function start() {
     closeLessonMenu();
     closeTeacherMenu(true);
     const existing = snapshot.lessons.find(lesson => lesson.id === lessonId);
+    const teacherChoices = getTeacherChoices(snapshot.teachers, {
+      mode: existing ? 'edit' : duplicate ? 'duplicate' : 'create',
+      teacherId: existing?.teacherId || duplicate?.teacherId,
+      visibleTeacherIds: selectedTeachers,
+    });
     const day = range.date || focusedDate;
     const startTime = range.start || fromSchoolInput(`${day}T09:00`);
     const lesson = existing || duplicate || {
-      title: '', teacherId: [...selectedTeachers][0] || snapshot.teachers[0]?.id || 'unassigned',
+      title: '', teacherId: teacherChoices.teacherId,
       group: '', start: startTime, end: range.end || new Date(new Date(startTime).getTime() + 3600000).toISOString(),
       room: '', participantText: '', checklist: '', status: 'scheduled', notes: '',
     };
@@ -368,7 +374,7 @@ async function start() {
     $('editor-eyebrow').textContent = duplicate ? 'NEW COPY' : existing ? 'SCHOOL CALENDAR' : 'NEW LESSON';
     $('lesson-actions').hidden = !existing;
     $('editor-version').textContent = isLive ? 'Saves to Grist' : existing ? 'Changes stay in this demo' : 'One lesson · one calendar event';
-    $('lesson-teacher').innerHTML = snapshot.teachers.map(t => `<option value="${escape(t.id)}">${escape(t.name)}</option>`).join('');
+    $('lesson-teacher').innerHTML = `${teacherChoices.teacherId ? '' : `<option value="" disabled>${teacherChoices.choices.length ? 'Choose a teacher' : 'No teachers available'}</option>`}${teacherChoices.choices.map(t => `<option value="${escape(t.id)}">${escape(t.name)}</option>`).join('')}`;
     $('lesson-identity-fields').hidden = !isLive;
     document.querySelector('label[for="lesson-group"]').textContent = isLive ? 'Group label (optional)' : 'Group';
     if (isLive) {
@@ -379,6 +385,7 @@ async function start() {
     for (const input of $('lesson-form').querySelectorAll('[name]')) {
       input.value = ['start', 'end'].includes(input.name) ? preciseSchoolInput(lesson[input.name]) : lesson[input.name] || '';
     }
+    $('lesson-teacher').value = teacherChoices.teacherId;
     durationController = createDurationController($('lesson-start').value, $('lesson-end').value);
     renderDuration();
     $('form-error').hidden = true;

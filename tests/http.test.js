@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { request } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { createCalendarServer } from '../server/http.mjs';
+import { createGristStore } from '../src/grist-store.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 async function withServer(store, fn) {
@@ -23,14 +24,29 @@ test('live API rejects foreign origins, host rebinding and missing write tokens'
     assert.ok(config.csrfToken.length >= 64);
     assert.deepEqual(Object.keys(config).sort(), ['csrfToken', 'label', 'mode']);
     for (const headers of [{ Origin: 'https://example.com' }, { 'Sec-Fetch-Site': 'cross-site' }]) {
-      assert.equal((await fetch(`${origin}/api/snapshot`, { headers })).status, 403);
+      const response = await fetch(`${origin}/api/snapshot`, { headers });
+      assert.equal(response.status, 403);
+      assert.match(response.headers.get('content-type'), /^application\/json/);
+      assert.deepEqual((await response.json()).error, {
+        code: 'ORIGIN_REJECTED', message: 'Open the calendar directly from its local server before saving.', outcomeUnknown: false,
+      });
     }
     const forgedHost = await new Promise((resolve, reject) => {
       const req = request(`${origin}/api/config`, { headers: { Host: 'attacker.example' } }, res => { res.resume(); resolve(res.statusCode); });
       req.on('error', reject); req.end();
     });
     assert.equal(forgedHost, 403);
-    assert.equal((await fetch(`${origin}/api/lessons`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"draft":{}}' })).status, 403);
+    for (const invalidToken of ['', 'stale-session', 'é'.repeat(64)]) {
+      const response = await fetch(`${origin}/api/lessons`, { method: 'POST', headers: {
+        'Content-Type': 'application/json', 'X-Calendar-Token': invalidToken,
+      }, body: '{"draft":{}}' });
+      assert.equal(response.status, 403);
+      assert.match(response.headers.get('content-type'), /^application\/json/);
+      const { error } = await response.json();
+      assert.equal(error.code, 'SESSION_EXPIRED');
+      assert.equal(error.outcomeUnknown, false);
+      assert.match(error.message, /Keep your current draft open/);
+    }
     assert.equal((await fetch(`${origin}/api/lessons`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Calendar-Token': config.csrfToken, Origin: 'https://example.com' }, body: '{"draft":{}}' })).status, 403);
     assert.equal(writes, 0);
     const response = await fetch(`${origin}/api/lessons`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Calendar-Token': config.csrfToken, Origin: origin }, body: JSON.stringify({ draft: { title: 'Test' }, expectedVersion: 'v', mutationId: 'm' }) });
@@ -38,6 +54,57 @@ test('live API rejects foreign origins, host rebinding and missing write tokens'
     assert.equal(writes, 1);
     assert.equal((await response.json()).lesson.id, 'grist:1');
     for (const name of ['/server/grist-client.mjs', '/server/schema.mjs', '/.env.local', '/docs/STATE.md']) assert.equal((await fetch(origin + name)).status, 404);
+  });
+});
+
+test('browser save and delete recover from stale sessions through the real HTTP boundary without duplicate writes', async t => {
+  const nativeFetch = globalThis.fetch;
+  const calls = [];
+  let lessons = [];
+  let saves = 0;
+  let deletions = 0;
+  const serverStore = {
+    getSnapshot: async () => ({ lessons, teachers: [], attendance: [] }),
+    saveLesson: async (draft, options) => {
+      saves++;
+      assert.equal(draft.clientId, 'synthetic-client-id');
+      assert.equal(options.expectedVersion, undefined);
+      assert.ok(options.mutationId);
+      const saved = { ...draft, id: 'all-att:1', version: 'revision-after-save' };
+      lessons = [saved];
+      return saved;
+    },
+    deleteLesson: async (id, options) => {
+      deletions++;
+      assert.equal(id, 'all-att:1');
+      assert.equal(options.expectedVersion, 'revision-after-save');
+      assert.ok(options.mutationId);
+      lessons = [];
+      return { id };
+    },
+  };
+  await withServer(serverStore, async origin => {
+    t.mock.method(globalThis, 'fetch', async (pathname, options) => {
+      calls.push({ pathname, body: options?.body, token: options?.headers?.['X-Calendar-Token'] });
+      return nativeFetch(new URL(pathname, origin), options);
+    });
+    const savingStore = await createGristStore({ csrfToken: 'synthetic-stale-session' });
+    const saved = await savingStore.saveLesson({ clientId: 'synthetic-client-id', title: 'Synthetic new lesson' });
+    assert.equal(saved.id, 'all-att:1');
+    assert.equal(savingStore.getSnapshot().lessons.length, 1);
+    const deletingStore = await createGristStore({ csrfToken: 'synthetic-stale-session' });
+    await deletingStore.deleteLesson(saved.id, { expectedVersion: saved.version });
+    assert.equal(deletingStore.getSnapshot().lessons.length, 0);
+    assert.equal(saves, 1);
+    assert.equal(deletions, 1);
+    assert.equal(calls.filter(call => call.pathname === '/api/config').length, 2);
+    for (const pathname of ['/api/lessons', '/api/lessons/delete']) {
+      const posts = calls.filter(call => call.pathname === pathname);
+      assert.equal(posts.length, 2);
+      assert.equal(posts[0].body, posts[1].body, 'renewal preserves the exact payload and mutation identity');
+      assert.equal(posts[0].token, 'synthetic-stale-session');
+      assert.equal(posts[1].token.length, 64);
+    }
   });
 });
 

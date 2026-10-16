@@ -9,6 +9,7 @@ export const ALL_ATT_FIELDS = Object.freeze([
   'Calendar_Participants', 'Calendar_Checklist', 'Calendar_Status', 'Calendar_Notes',
   'Calendar_Mutation', 'Calendar_Parent', 'Calendar_Attendance', 'Calendar_Revision',
 ]);
+export const PERFORMANCE_FIELDS = Object.freeze(['name', 'label']);
 
 const palette = ['#4285f4', '#18875b', '#8e63ce', '#d59116', '#c55778', '#268e9b', '#7464b5', '#a5703d'];
 const fieldsOf = record => record?.fields && typeof record.fields === 'object' ? record.fields : record || {};
@@ -19,7 +20,12 @@ const recordsById = records => new Map(records.filter(row => positiveId(row.id))
 const lessonId = id => `all-att:${id}`;
 const teacherId = ids => ids.length ? `per:${ids.join(',')}` : 'unassigned';
 const studentName = (id, folks) => text(folks.get(id)?.name).trim() || `Student #${id}`;
-const groupName = (id, performance) => text(performance.get(id)?.A).trim() || `Group #${id}`;
+const performanceName = (id, performance, fallback) => {
+  const value = text(performance.get(id)?.name);
+  return value.trim() ? value : fallback;
+};
+const performanceLabel = fields => text(fields?.label).trim().toLocaleLowerCase();
+const groupName = (id, performance) => performanceName(id, performance, `Group #${id}`);
 // The length check also excludes the trailing newline accepted by RegExp's $.
 const isPreparedGroupUid = value => typeof value === 'string' && value.length === 'all-att-group:'.length + 64 &&
   /^all-att-group:[a-f0-9]{64}$/.test(value);
@@ -62,12 +68,14 @@ function epochToIso(epoch) {
 
 function makeTeacher(ids, performance) {
   const id = teacherId(ids);
-  const names = ids.map(ref => text(performance.get(ref)?.A).trim() || `Teacher #${ref}`);
+  const names = ids.map(ref => performanceName(ref, performance, `Teacher #${ref}`));
   const name = names.length ? names.join(' + ') : 'Unassigned';
-  const initialParts = ids.length > 1 ? names.slice(0, 2) : name.split(/\s+/).filter(Boolean).slice(0, 2);
   return { id, name, sourceIds: [...ids],
+    selectable: ids.length === 1 && performanceLabel(performance.get(ids[0])) === 'team',
     color: ids.length ? palette[parseInt(hash(id).slice(0, 8), 16) % palette.length] : '#71717a',
-    initials: initialParts.map(part => Array.from(part)[0]).join('').toLocaleUpperCase(),
+    // Team names already contain the school's chosen initials. Keep their case
+    // and text instead of deriving a different abbreviation from them.
+    initials: ids.length ? ids.map(ref => performanceName(ref, performance, '?')).join(' + ') : '—',
   };
 }
 
@@ -85,7 +93,7 @@ export function normalizeAllAttSnapshot({ attendance = [], performance = [], fol
     return id;
   };
   for (const [id, fields] of performanceById) {
-    if (text(fields.type).trim().toLocaleLowerCase() === 'team') addTeacher([id]);
+    if (performanceLabel(fields) === 'team') addTeacher([id]);
   }
   addTeacher([]);
   const normalizedLessons = [];
@@ -179,7 +187,7 @@ export function normalizeAllAttSnapshot({ attendance = [], performance = [], fol
     .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const referencedGroups = new Set(attendance.flatMap(row => refs(fieldsOf(row).group2)));
   const groupIds = new Set([...performanceById].filter(([, fields]) =>
-    text(fields.type).trim().toLocaleLowerCase() === 'group').map(([id]) => id));
+    performanceLabel(fields) === 'group').map(([id]) => id));
   // Existing lessons retain missing group IDs and fallback labels, but new
   // bookings must not offer a deleted reference as an available group.
   referencedGroups.forEach(id => { if (performanceById.has(id)) groupIds.add(id); });

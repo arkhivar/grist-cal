@@ -11,7 +11,9 @@ const fail = (code, message) => Object.assign(new Error(message), { code });
 
 function sameToken(actual, expected) {
   if (typeof actual !== 'string' || actual.length !== expected.length) return false;
-  return timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
+  const supplied = Buffer.from(actual);
+  const known = Buffer.from(expected);
+  return supplied.length === known.length && timingSafeEqual(supplied, known);
 }
 
 async function readJson(req) {
@@ -46,20 +48,26 @@ export function createCalendarServer({ root, store = null }) {
     };
     const json = (status, data) => { res.writeHead(status, { ...headers, 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); };
     const text = (status, body = '') => { res.writeHead(status, { ...headers, 'Content-Type': 'text/plain; charset=utf-8' }); res.end(body); };
+    const rejectApi = (code, message) => json(403, { error: { code, message, outcomeUnknown: false } });
     try {
       const port = server.address()?.port;
       const validHosts = [`127.0.0.1:${port}`, `localhost:${port}`];
-      if (!validHosts.includes(req.headers.host)) return text(403, 'Local access only');
+      if (!validHosts.includes(req.headers.host)) return req.url?.startsWith('/api/')
+        ? rejectApi('LOCAL_ACCESS_REQUIRED', 'This calendar server accepts local access only.') : text(403, 'Local access only');
       const origin = `http://${req.headers.host}`;
       const url = new URL(req.url, origin);
       const pathname = decodeURIComponent(url.pathname);
       if (pathname.startsWith('/api/')) {
-        if ((req.headers.origin && req.headers.origin !== origin) || req.headers['sec-fetch-site'] === 'cross-site') return text(403, 'Same-origin access required');
+        if ((req.headers.origin && req.headers.origin !== origin) || req.headers['sec-fetch-site'] === 'cross-site') {
+          return rejectApi('ORIGIN_REJECTED', 'Open the calendar directly from its local server before saving.');
+        }
         if (pathname === '/api/config' && req.method === 'GET') return json(200, { mode: store ? 'grist' : 'demo', label: store ? 'Grist sandbox' : 'Sample school', csrfToken: store ? csrfToken : null });
         if (!store) return json(404, { error: { code: 'NOT_CONNECTED', message: 'This server is running the local demo.' } });
         if (pathname === '/api/snapshot' && req.method === 'GET') return json(200, await snapshot());
         if (['/api/lessons', '/api/lessons/delete'].includes(pathname) && req.method === 'POST') {
-          if (!sameToken(req.headers['x-calendar-token'], csrfToken)) return text(403, 'Reload the calendar before saving');
+          if (!sameToken(req.headers['x-calendar-token'], csrfToken)) {
+            return rejectApi('SESSION_EXPIRED', 'The calendar session expired after a server restart. This attempt was rejected before saving. Keep your current draft open and reconnect before retrying the same changes.');
+          }
           const body = await readJson(req);
           const deleting = pathname === '/api/lessons/delete';
           if (!body || typeof body !== 'object' || Array.isArray(body) || (deleting ? typeof body.id !== 'string' : !body.draft)) {

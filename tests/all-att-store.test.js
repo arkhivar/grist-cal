@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createAllAttStore } from '../server/all-att-store.mjs';
-import { ALL_ATT_FIELDS, lessonVersion } from '../server/all-att-model.mjs';
+import { ALL_ATT_FIELDS, PERFORMANCE_FIELDS, lessonVersion } from '../server/all-att-model.mjs';
 import { DATE_REGISTRY_FIELDS } from '../server/date-registry.mjs';
 
 const UID = '12345678-1234-4123-8123-123456789abc';
@@ -26,8 +26,8 @@ function initialTables() {
     Calendar_Mutation: ORIGINAL_MUTATION,
     datetime: 1791864000, per: ['L', 18], wage: 750, payment: 1200, Unknown_Formula: 500, Calendar_Lesson: 9 };
   return {
-    PERFORMANCE: [{ id: 17, fields: { A: 'Teacher One', type: 'team' } },
-      { id: 18, fields: { A: 'Teacher Two', type: 'team' } }, { id: 40, fields: { A: 'Group A', type: 'group' } }],
+    PERFORMANCE: [{ id: 17, fields: { name: 't1', label: 'team' } },
+      { id: 18, fields: { name: 'т2', label: 'team' } }, { id: 40, fields: { name: 'Group A', label: 'group' } }],
     FOLKS: [{ id: 31, fields: { name: 'Fictional Student', private_finance: 99 } },
       { id: 32, fields: { name: 'Another Fictional Student' } }],
     DateRegistry: [{ id: 101, fields: { Date: Date.parse('2026-10-13T00:00:00Z') / 1000,
@@ -120,10 +120,13 @@ test('ALL_ATT snapshot projects scheduling sources and date metadata once, never
   assert.deepEqual(snapshot.lessons.map(lesson => lesson.id).sort(), ['all-att:56', 'all-att:7']);
   assert.ok(snapshot.attendance.some(record => record.lessonId === 'all-att:7'));
   assert.deepEqual(client.reads, [{ table: 'ALL_ATT', fields: [...ALL_ATT_FIELDS] },
-    { table: 'PERFORMANCE', fields: ['A', 'type'] }, { table: 'FOLKS', fields: ['name'] },
+    { table: 'PERFORMANCE', fields: [...PERFORMANCE_FIELDS] }, { table: 'FOLKS', fields: ['name'] },
     { table: 'DateRegistry', fields: [...DATE_REGISTRY_FIELDS] }]);
   assert.ok(!JSON.stringify(snapshot).includes('private_finance'));
   assert.ok(!JSON.stringify(snapshot).includes('private_notes'));
+  assert.deepEqual(PERFORMANCE_FIELDS, ['name', 'label']);
+  assert.equal(snapshot.teachers.find(teacher => teacher.id === 'per:17').name, 't1');
+  assert.equal(snapshot.teachers.find(teacher => teacher.id === 'per:18').initials, 'т2');
   assert.ok(!ALL_ATT_FIELDS.includes('Calendar_Date'));
   assert.ok(!ALL_ATT_FIELDS.includes('DateRegistry'));
   assert.deepEqual(snapshot.calendarDates, [
@@ -546,6 +549,60 @@ test('ALL_ATT dangling legacy group and teacher references can be retained but n
   assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Room, 'Updated room');
 });
 
+test('new and changed teacher choices require one team record while historical assignments remain unchanged', async () => {
+  for (const sourceRefs of [null, ['L'], ['L', 18, 17, 18], ['L', 40], ['L', 998], ['L', 17, 998]]) {
+    const client = mockClient();
+    client.tables.ALL_ATT[0].fields.t = clone(sourceRefs);
+    const store = createAllAttStore({ client });
+    const lesson = await groupLesson(store);
+    const snapshot = await store.getSnapshot();
+    assert.equal(snapshot.teachers.find(teacher => teacher.id === lesson.teacherId).selectable, false);
+    await assert.rejects(store.saveLesson({ ...freshDraft(), teacherId: lesson.teacherId },
+      { mutationId: MUTATION }), { code: 'VALIDATION_ERROR' });
+    const individual = snapshot.lessons.find(row => row.id === 'all-att:56');
+    await assert.rejects(store.saveLesson({ ...individual, teacherId: lesson.teacherId, selectable: true },
+      { expectedVersion: individual.version, mutationId: MUTATION }), { code: 'VALIDATION_ERROR' });
+    assert.equal(client.writes.length, 0);
+    const saved = await store.saveLesson({ ...lesson, title: 'Metadata edit preserving teacher' },
+      { expectedVersion: lesson.version, mutationId: MUTATION });
+    assert.equal(saved.teacherId, lesson.teacherId);
+    assert.deepEqual(client.tables.ALL_ATT[0].fields.t, sourceRefs);
+    assert.ok(!Object.hasOwn(client.writes[0].body.records[0].fields, 't'));
+  }
+});
+
+test('current team labels govern new selections without invalidating unchanged historical teacher edits', async () => {
+  const client = mockClient();
+  const store = createAllAttStore({ client });
+  const lesson = await groupLesson(store);
+  client.tables.PERFORMANCE[0].fields.label = 'guest';
+  client.tables.PERFORMANCE[1].fields.label = ' TEAM ';
+  await assert.rejects(store.saveLesson(freshDraft(), { mutationId: MUTATION }), { code: 'VALIDATION_ERROR' });
+  const retained = await store.saveLesson({ ...lesson, room: 'Preserve historical teacher' },
+    { expectedVersion: lesson.version, mutationId: MUTATION });
+  assert.equal(retained.teacherId, 'per:17');
+  const changed = await store.saveLesson({ ...retained, teacherId: 'per:18' },
+    { expectedVersion: retained.version, mutationId: OTHER_MUTATION });
+  assert.equal(changed.teacherId, 'per:18');
+  assert.deepEqual(client.tables.ALL_ATT[0].fields.t, ['L', 18]);
+});
+
+test('a confirmed creation retry survives a teacher losing its team label or source record', async () => {
+  for (const removeRecord of [false, true]) {
+    const client = mockClient();
+    const store = createAllAttStore({ client });
+    const draft = freshDraft();
+    const saved = await store.saveLesson(draft, { mutationId: MUTATION });
+    if (removeRecord) client.tables.PERFORMANCE = client.tables.PERFORMANCE.filter(row => row.id !== 17);
+    else client.tables.PERFORMANCE[0].fields.label = 'guest';
+    assert.equal((await store.saveLesson(draft, { mutationId: MUTATION })).id, saved.id);
+    assert.equal(client.writes.length, 1, 'Confirm the existing creation without making another assignment');
+    await assert.rejects(store.saveLesson({ ...draft, title: 'Different creation' }, { mutationId: OTHER_MUTATION }),
+      { code: 'VERSION_CONFLICT' });
+    assert.equal(client.writes.length, 1);
+  }
+});
+
 test('ALL_ATT malformed revision blocks edits and deletes before mutation', async () => {
   const client = mockClient({ invalidRevision: true });
   const store = createAllAttStore({ client });
@@ -598,9 +655,9 @@ test('ALL_ATT readback accepts empty RefList canonicalization and preserves raw 
     }
   } });
   const store = createAllAttStore({ client });
-  const draft = { ...freshDraft(), teacherId: 'unassigned' };
+  const draft = freshDraft();
   const saved = await store.saveLesson(draft, { mutationId: MUTATION });
-  assert.equal(saved.teacherId, 'unassigned');
+  assert.equal(saved.teacherId, 'per:17');
   assert.equal(client.tables.ALL_ATT[3].fields.student, null);
   assert.equal((await store.saveLesson(draft, { mutationId: MUTATION })).id, saved.id);
   assert.equal(client.writes.length, 1);

@@ -35,6 +35,12 @@ Existing column definitions and input values are protected unless the user expli
 
 The user deleted `Calendar_Lessons` on 2026-10-15; a fresh API read confirms it is absent. The obsolete standalone `UUID` column was also removed by the user; the selected shared identifier column is `Calendar_UID`.
 
+### Teacher catalog — 2026-10-16
+
+The active PERFORMANCE catalog uses the existing stored Text name and Choice label columns. The live table no longer has A/type; the adapter's old projection was stale. The 17 records labelled team contain the school's two-character initials in name. Display those values exactly, including their case, rather than deriving another abbreviation. No Grist fields or definitions are changed by this mapping update.
+
+New lesson teacher choices are single current team records. The server validates that rule when creating a lesson or changing its teacher; supplied client flags cannot override it. Existing missing, multiple or non-team references remain visible and may be preserved during other edits. Duplicating such a lesson requires an explicit eligible teacher choice. The complete historical catalog still supports existing events and sidebar filters. Group names and group-label selection also read the current name/label fields.
+
 ### Check after the user's table deletion — 2026-10-15
 
 At the first check, both obsolete ALL_ATT columns remained. Calendar_Lesson had become Int with 3,211 nonempty old IDs; Calendar_Source_Revision still referred to `$Calendar_Lesson.id` and was the only formula mentioning either obsolete field across the remaining tables. Removal was recommended in that order: source revision, then old link. **The user subsequently removed both columns; a fresh API read confirms their absence.** No live columns were deleted or changed by the assistant during these checks.

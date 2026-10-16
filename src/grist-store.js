@@ -27,19 +27,31 @@ async function request(path, options = {}) {
         ? 'The connection was interrupted. The save may have reached Grist. Retry the same changes to check safely.'
         : 'Could not reach the calendar server. Check the connection and try again.', writing);
     }
+    const contentType = response.headers.get('content-type') || '';
+    if (!/^application\/(?:[a-z0-9.+-]+\+)?json(?:\s*;|\s*$)/i.test(contentType)) {
+      const format = /^text\/html\b/i.test(contentType) ? 'an HTML page' : 'a non-JSON response';
+      throw Object.assign(failure('INVALID_RESPONSE',
+        `The calendar server returned ${format} (HTTP ${response.status}). ${writing
+          ? deleting ? 'The deletion may have reached Grist. Retry the same deletion to check safely.'
+            : 'The save may have reached Grist. Retry the same changes to check safely.'
+          : 'Check that the calendar server is running and try again.'}`, writing), { status: response.status });
+    }
     let body;
     try { body = await response.json(); }
     catch {
-      throw failure('INVALID_RESPONSE', deleting
+      throw Object.assign(failure('INVALID_RESPONSE', deleting
         ? 'The deletion response could not be read. Retry the same deletion to check whether it reached Grist.' : writing
         ? 'The save response could not be read. Retry the same changes to check whether they reached Grist.'
-        : 'The server response could not be read. Try again.', writing);
+        : 'The server response could not be read. Try again.', writing), { status: response.status });
     }
     if (!response.ok) {
       const error = body?.error;
-      throw failure(error?.code || `HTTP_${response.status}`,
+      throw Object.assign(failure(error?.code || `HTTP_${response.status}`,
         typeof error?.message === 'string' ? error.message : 'The calendar request failed. Please try again.',
-        Boolean(error?.outcomeUnknown));
+        Boolean(error?.outcomeUnknown)), {
+        status: response.status,
+        canRenewSession: response.status === 403 && error?.code === 'SESSION_EXPIRED' && error?.outcomeUnknown === false,
+      });
     }
     return body;
   } finally { clearTimeout(timeout); }
@@ -70,6 +82,7 @@ export async function createGristStore({ csrfToken } = {}) {
   let snapshot = checkSnapshot(await request('/api/snapshot'));
   const subscribers = new Set();
   const pendingMutations = new Map();
+  let sessionToken = csrfToken;
   let queue = Promise.resolve();
   const getSnapshot = () => copy(snapshot);
   const publish = next => {
@@ -84,6 +97,34 @@ export async function createGristStore({ csrfToken } = {}) {
     const operation = queue.then(action);
     queue = operation.catch(() => {});
     return operation;
+  };
+  const preserveUnknownOutcome = (error, mutation, deleting = false) => {
+    if (error.outcomeUnknown) mutation.outcomeUnknown = true;
+    else if (mutation.outcomeUnknown) {
+      error.outcomeUnknown = true;
+      error.message += deleting
+        ? ' An earlier deletion attempt may have reached Grist. Retry the same deletion to check safely.'
+        : ' An earlier save attempt may have reached Grist. Keep this draft and retry the same changes to check safely.';
+    }
+    throw error;
+  };
+  const write = async (path, payload) => {
+    const body = JSON.stringify(payload);
+    const send = () => request(path, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Calendar-Token': sessionToken }, body });
+    try { return await send(); }
+    catch (error) {
+      // Only this structured rejection guarantees that the local server did not
+      // invoke the writer. Never replay an arbitrary 403 or an uncertain response.
+      if (!error.canRenewSession) throw error;
+      const config = await readCalendarConfig();
+      if (config.mode !== 'grist') {
+        throw failure('NOT_CONNECTED', 'The server is no longer connected to Grist. Your draft has been kept; reconnect and retry.');
+      }
+      sessionToken = config.csrfToken;
+      // One renewal attempt, with the exact same body and mutation identity.
+      return send();
+    }
   };
   return {
     getSnapshot,
@@ -102,14 +143,10 @@ export async function createGristStore({ csrfToken } = {}) {
     saveLesson(draft, { expectedVersion } = {}) {
       const submitted = copy(draft);
       const key = stableKey({ draft: submitted, expectedVersion });
-      const mutationId = pendingMutations.get(key) || crypto.randomUUID();
-      pendingMutations.set(key, mutationId);
+      const mutation = pendingMutations.get(key) || { id: crypto.randomUUID(), outcomeUnknown: false };
+      pendingMutations.set(key, mutation);
       return sequential(async () => {
-        const result = await request('/api/lessons', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Calendar-Token': csrfToken },
-          body: JSON.stringify({ draft: submitted, expectedVersion, mutationId }),
-        });
+        const result = await write('/api/lessons', { draft: submitted, expectedVersion, mutationId: mutation.id });
         if (!result?.lesson || typeof result.lesson.id !== 'string') {
           throw failure('INVALID_RESPONSE', 'The save could not be confirmed. Retry the same changes to check whether they reached Grist.', true);
         }
@@ -124,20 +161,17 @@ export async function createGristStore({ csrfToken } = {}) {
           catch { throw failure('INVALID_RESPONSE', 'The save reached the server, but its latest data could not be read. Retry the same changes to check safely.', true); }
           publish(result.snapshot);
         }
+        mutation.outcomeUnknown = false;
         pendingMutations.delete(key);
         return { ...copy(result.lesson), ...(result.refreshWarning ? { refreshWarning: true } : {}) };
-      });
+      }).catch(error => preserveUnknownOutcome(error, mutation));
     },
     deleteLesson(id, { expectedVersion } = {}) {
       const key = stableKey({ operation: 'delete', id, expectedVersion });
-      const mutationId = pendingMutations.get(key) || crypto.randomUUID();
-      pendingMutations.set(key, mutationId);
+      const mutation = pendingMutations.get(key) || { id: crypto.randomUUID(), outcomeUnknown: false };
+      pendingMutations.set(key, mutation);
       return sequential(async () => {
-        const result = await request('/api/lessons/delete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Calendar-Token': csrfToken },
-          body: JSON.stringify({ id, expectedVersion, mutationId }),
-        });
+        const result = await write('/api/lessons/delete', { id, expectedVersion, mutationId: mutation.id });
         if (result?.lessonId !== id) {
           throw failure('INVALID_RESPONSE', 'The deletion could not be confirmed. Retry the same deletion to check safely.', true);
         }
@@ -153,9 +187,10 @@ export async function createGristStore({ csrfToken } = {}) {
           }
           publish(result.snapshot);
         }
+        mutation.outcomeUnknown = false;
         pendingMutations.delete(key);
         return { id, ...(result.refreshWarning ? { refreshWarning: true } : {}) };
-      });
+      }).catch(error => preserveUnknownOutcome(error, mutation, true));
     },
   };
 }

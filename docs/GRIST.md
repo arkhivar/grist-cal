@@ -44,6 +44,8 @@ An empty student cell is deliberately treated as a group header under this rule,
 
 `start` and stored `Duration_Minutes` are the authoritative schedule inputs; `end` is a DateTime formula adding elapsed minutes in UTC. Teacher edits update `t`. The calendar accepts start/end in its UI/API and translates scheduling edits to the stored inputs. Missing teachers appear as Unassigned; multiple references remain a combination.
 
+The Teacher selector reads PERFORMANCE.name (the school's stored initials) from records whose label is team. New or changed assignments require one such record. Existing lessons retain their current missing/multiple/non-team references when other details are edited; those historical values are not new-booking choices. Names retain their supplied spelling and case. The active catalog projects name/label; the old A/type mapping belongs only to historical code.
+
 `Calendar_Parent` links a group attendance row to a header within `ALL_ATT`. Individual attendance belongs to its own lesson row without creating a second row. Calendar event identities are `all-att:<row ID>`; `Calendar_UID` provides stable identities for creates and preparation retries.
 
 ## Set up schema and inspect the plan
@@ -161,6 +163,8 @@ Remove-Variable gristConfigJson, gristCredential, gristSecret
 ```
 
 The server binds only to `127.0.0.1`. It validates local hosts, same-origin requests and a per-process write token. These controls support local use; they do not provide teacher authentication or per-user Grist permissions.
+
+If a server restart expires a tab's write token, the server rejects that attempt before calling Grist and returns a structured SESSION_EXPIRED response. The updated client obtains a fresh token and retries once with the exact same payload and mutation identity, preserving the open draft. Arbitrary HTTP failures, unreadable responses and uncertain writes are never automatically replayed. If an earlier attempt was uncertain, later session/configuration failures do not clear that uncertainty; only an acknowledged save or deletion does. Tabs loaded before this recovery code need to load the updated client, taking care to retain unsaved details and check any uncertain earlier save first.
 
 ## What is saved
 

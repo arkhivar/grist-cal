@@ -9,8 +9,8 @@ const row = (id, extra = {}) => record(id, {
 });
 const header = (id, extra = {}) => row(id, { student: ['L'], group2: ['L', 31], ...extra });
 const child = (id, parent = 10, extra = {}) => row(id, { group2: ['L', 31], Calendar_Parent: parent, ...extra });
-const performance = [record(17, { A: 'Teacher One', type: 'team', wage: 87654 }),
-  record(18, { A: 'Teacher Two', type: 'team' }), record(31, { A: 'Group A', type: 'group' })];
+const performance = [record(17, { name: 'Teacher One', label: 'team', wage: 87654 }),
+  record(18, { name: 'Teacher Two', label: 'team' }), record(31, { name: 'Group A', label: 'group' })];
 const folks = [record(1, { name: 'Student One', balance: 998877 }), record(2, { name: 'Student Two' })];
 const normalize = attendance => normalizeAllAttSnapshot({ attendance, performance, folks });
 
@@ -134,6 +134,28 @@ test('missing and multiple teachers remain explicit and deterministic; option ca
   assert.deepEqual(result.lessons[1].groupIds, ['per:999']);
   assert.equal(result.lessons[1].group, 'Group #999');
   assert.doesNotMatch(JSON.stringify(result), /wage|balance|87654|998877/);
+});
+
+test('teacher choices use exact Grist initials and only individual team rows are selectable', () => {
+  const result = normalizeAllAttSnapshot({ performance: [
+    record(17, { name: 'aB', label: 'team', A: 'Obsolete name', type: 'group' }),
+    record(18, { name: 'яю', label: ' TEAM ' }), record(19, { name: '', label: 'team' }),
+    record(31, { name: 'Group B', label: 'group' }), record(32, { name: 'Other', label: 'guest' }),
+    record(33, { name: 'Old tag', type: 'team' }),
+  ], attendance: [row(1, { t: ['L', 17, 18] }), row(2, { t: ['L', 31] }),
+    row(3, { t: ['L', 999] }), row(4, { t: ['L', 32] }), row(5, { group2: ['L', 31] })] });
+  const byId = new Map(result.teachers.map(teacher => [teacher.id, teacher]));
+  assert.deepEqual(result.teachers.filter(teacher => teacher.selectable).map(teacher => teacher.id).sort(), ['per:17', 'per:18', 'per:19']);
+  assert.equal(byId.get('per:17').name, 'aB');
+  assert.equal(byId.get('per:17').initials, 'aB');
+  assert.equal(byId.get('per:18').initials, 'яю');
+  assert.equal(byId.get('per:19').name, 'Teacher #19', 'A blank name needs an explicit identity fallback');
+  assert.equal(byId.get('per:19').initials, '?');
+  assert.equal(byId.get('per:17,18').name, 'aB + яю');
+  for (const id of ['per:17,18', 'per:31', 'per:32', 'per:999', 'unassigned']) assert.equal(byId.get(id).selectable, false);
+  assert.ok(!byId.has('per:33'), 'Obsolete type does not supply team eligibility');
+  assert.deepEqual(result.groups, [{ id: 'per:31', name: 'Group B' }]);
+  assert.doesNotMatch(JSON.stringify(result), /Obsolete name|Old tag/);
 });
 
 test('calendar metadata stays separate from original attendance notes and no money/note infers attendance status', () => {

@@ -1,6 +1,6 @@
 import { editableFields, storeError, validateLesson } from '../src/lesson-validation.js';
 import { schoolToday } from '../src/domain.js';
-import { ALL_ATT_FIELDS, classifyRow, lessonFields, lessonVersion, normalizeAllAttSnapshot } from './all-att-model.mjs';
+import { ALL_ATT_FIELDS, PERFORMANCE_FIELDS, classifyRow, lessonFields, lessonVersion, normalizeAllAttSnapshot } from './all-att-model.mjs';
 import { DATE_REGISTRY_FIELDS, DATE_REGISTRY_TABLE, inspectDateRegistry } from './date-registry.mjs';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -93,14 +93,14 @@ function candidateFrom(draft, existing, snapshot, sourceDuration) {
   try { return validateLesson(candidate, snapshot.teachers); }
   catch (error) { error.status = 400; throw error; }
 }
-function writableValues(candidate, teachers, { existing, performance, sourceDuration, preserveDuration }) {
-  const teacherIds = teachers.find(({ id }) => id === candidate.teacherId)?.sourceIds;
+function writableValues(candidate, teachers, { existing, retainedTeacherId, sourceDuration, preserveDuration }) {
+  const teacher = teachers.find(({ id }) => id === candidate.teacherId);
+  const teacherIds = teacher?.sourceIds;
   if (!Array.isArray(teacherIds) || teacherIds.some(id => !Number.isSafeInteger(id) || id <= 0)) {
     throw failure('VALIDATION_ERROR', 'Choose a valid teacher for this lesson.', 400);
   }
-  if ((!existing || candidate.teacherId !== existing.teacherId) &&
-    teacherIds.some(id => !performance.some(record => record.id === id))) {
-    throw failure('VALIDATION_ERROR', 'Choose an existing teacher for this lesson.', 400);
+  if (candidate.teacherId !== retainedTeacherId && teacher.selectable !== true) {
+    throw failure('VALIDATION_ERROR', 'Choose a teacher labelled team in Grist.', 400);
   }
   const elapsed = Date.parse(candidate.end) - Date.parse(candidate.start);
   const unchangedDuration = existing && elapsed === Date.parse(existing.end) - Date.parse(existing.start);
@@ -121,7 +121,7 @@ export function createAllAttStore({ client } = {}) {
   async function lessonRows() { return client.records('ALL_ATT', ALL_ATT_FIELDS); }
   async function readTables() {
     const [attendance, performance, folks] = await Promise.all([
-      lessonRows(), client.records('PERFORMANCE', ['A', 'type']), client.records('FOLKS', ['name']),
+      lessonRows(), client.records('PERFORMANCE', PERFORMANCE_FIELDS), client.records('FOLKS', ['name']),
     ]);
     return { attendance, performance, folks };
   }
@@ -196,7 +196,11 @@ export function createAllAttStore({ client } = {}) {
       throw failure('SCHEMA_ERROR', 'This lesson needs a valid stored duration before it can be edited.', 503);
     }
     const candidate = candidateFrom(draft, existing, snapshot, sourceDuration);
-    const values = writableValues(candidate, snapshot.teachers, { existing, performance: tables.performance, sourceDuration,
+    const duplicate = isUpdate ? [] : tables.attendance.filter(record => record.fields.Calendar_UID === draft.clientId);
+    // A completed creation may be retried after its teacher loses the team label.
+    // Matching the saved values below confirms it without assigning a new teacher.
+    const created = duplicate.length === 1 ? snapshot.lessons.find(lesson => lesson.sourceRowId === duplicate[0].id) : null;
+    const values = writableValues(candidate, snapshot.teachers, { existing, retainedTeacherId: (existing || created)?.teacherId, sourceDuration,
       preserveDuration: isUpdate && Object.hasOwn(draft, 'start') && !Object.hasOwn(draft, 'end') });
 
     if (!isUpdate) {
@@ -206,7 +210,6 @@ export function createAllAttStore({ client } = {}) {
         Calendar_Mutation: mutationId, Calendar_Parent: 0, Calendar_Attendance: 'pending' };
       const expected = { ...createFields, end: createFields.start + createFields.Duration_Minutes * 60 };
       delete expected.Calendar_Mutation;
-      const duplicate = tables.attendance.filter(record => record.fields.Calendar_UID === draft.clientId);
       if (duplicate.length) {
         if (duplicate.length === 1 && matches(lessonFields(duplicate[0]), expected)) return savedLesson(tables, duplicate[0]);
         throw failure('VERSION_CONFLICT', 'This new-lesson identifier already belongs to a different lesson. Refresh before continuing.', 409);

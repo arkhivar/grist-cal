@@ -313,3 +313,149 @@ test('a refresh during deletion waits for the committed result and cannot restor
   assert.equal(store.getSnapshot().lessons.length, 0);
   assert.equal(store.getSnapshot().attendance.length, 1);
 });
+
+test('a lost create followed by session expiry keeps the original mutation and client identity', async t => {
+  const requests = [];
+  const serverRows = new Map();
+  const renewedToken = 'synthetic-renewed-session';
+  let configReads = 0;
+  t.mock.method(globalThis, 'fetch', async (path, options) => {
+    if (path === '/api/snapshot') return json(snapshot([]));
+    if (path === '/api/config') {
+      configReads++;
+      return json({ mode: 'grist', csrfToken: renewedToken });
+    }
+    requests.push({ path, body: options.body, token: options.headers['X-Calendar-Token'] });
+    const request = JSON.parse(options.body);
+    if (path === '/api/lessons/delete') {
+      assert.equal(options.headers['X-Calendar-Token'], renewedToken, 'later writes reuse the renewed session');
+      return json({ lessonId: lesson().id, snapshot: snapshot([]) });
+    }
+    assert.equal(path, '/api/lessons');
+    if (requests.length === 2) {
+      return json({ error: { code: 'SESSION_EXPIRED', message: 'Keep the draft open.', outcomeUnknown: false } }, 403);
+    }
+    const saved = serverRows.get(request.draft.clientId) || lesson({ title: request.draft.title });
+    serverRows.set(request.draft.clientId, saved);
+    if (requests.length === 1) throw new TypeError('Synthetic response lost after commit');
+    return json({ lesson: saved, snapshot: snapshot([saved]) });
+  });
+  const store = await createGristStore({ csrfToken: token });
+  const draft = { clientId: 'synthetic-create-identity', title: 'Keep this draft' };
+  await assert.rejects(store.saveLesson(draft), { code: 'NETWORK_ERROR', outcomeUnknown: true });
+  assert.equal(store.getSnapshot().lessons.length, 0);
+  const saved = await store.saveLesson({ ...draft });
+  assert.equal(saved.id, lesson().id);
+  assert.equal(serverRows.size, 1);
+  assert.equal(configReads, 1);
+  assert.deepEqual(requests.map(item => item.token), [token, token, renewedToken]);
+  assert.equal(requests[0].body, requests[1].body, 'manual retry retains the unknown request');
+  assert.equal(requests[1].body, requests[2].body, 'session renewal replays the exact same request');
+  assert.ok(JSON.parse(requests[2].body).mutationId);
+  assert.deepEqual(draft, { clientId: 'synthetic-create-identity', title: 'Keep this draft' });
+  await store.deleteLesson(saved.id, { expectedVersion: saved.version });
+  assert.equal(configReads, 1);
+});
+
+test('session renewal requires the explicit structured pre-write rejection', async t => {
+  const cases = [
+    ['plain 403', () => new Response('Reload the calendar before saving', { status: 403, headers: { 'Content-Type': 'text/plain' } }), 'INVALID_RESPONSE', true],
+    ['HTML success', () => new Response('<html>private upstream detail</html>', { headers: { 'Content-Type': 'text/html' } }), 'INVALID_RESPONSE', true],
+    ['malformed JSON', () => new Response('{', { headers: { 'Content-Type': 'application/json' } }), 'INVALID_RESPONSE', true],
+    ['foreign origin', () => json({ error: { code: 'ORIGIN_REJECTED', outcomeUnknown: false } }, 403), 'ORIGIN_REJECTED', false],
+    ['uncertain session error', () => json({ error: { code: 'SESSION_EXPIRED', outcomeUnknown: true } }, 403), 'SESSION_EXPIRED', true],
+    ['missing rejection marker', () => json({ error: { code: 'SESSION_EXPIRED' } }, 403), 'SESSION_EXPIRED', false],
+    ['wrong status', () => json({ error: { code: 'SESSION_EXPIRED', outcomeUnknown: false } }, 409), 'SESSION_EXPIRED', false],
+  ];
+  for (const [name, response, code, outcomeUnknown] of cases) await t.test(name, async child => {
+    const calls = [];
+    child.mock.method(globalThis, 'fetch', async path => {
+      calls.push(path);
+      return path === '/api/snapshot' ? json(snapshot()) : response();
+    });
+    const store = await createGristStore({ csrfToken: token });
+    const before = store.getSnapshot();
+    await assert.rejects(store.saveLesson({ id: lesson().id, title: 'Unconfirmed draft' }, { expectedVersion: 1 }), error => {
+      assert.equal(error.code, code);
+      assert.equal(error.outcomeUnknown, outcomeUnknown);
+      assert.doesNotMatch(error.message, /private upstream detail/);
+      if (name === 'plain 403') assert.match(error.message, /non-JSON response \(HTTP 403\)/);
+      if (name === 'HTML success') assert.match(error.message, /HTML page \(HTTP 200\)/);
+      return true;
+    });
+    assert.deepEqual(calls, ['/api/snapshot', '/api/lessons'], 'no config lookup or automatic replay');
+    assert.deepEqual(store.getSnapshot(), before);
+  });
+});
+
+test('session renewal is bounded and an unavailable Grist configuration never resends the write', async t => {
+  for (const mode of ['repeat-expiry', 'demo', 'unavailable']) await t.test(mode, async child => {
+    const bodies = [];
+    let configReads = 0;
+    child.mock.method(globalThis, 'fetch', async (path, options) => {
+      if (path === '/api/snapshot') return json(snapshot());
+      if (path === '/api/config') {
+        configReads++;
+        if (mode === 'unavailable') throw new TypeError('Synthetic config failure');
+        return json({ mode: mode === 'demo' ? 'demo' : 'grist', csrfToken: 'synthetic-new-token' });
+      }
+      bodies.push(options.body);
+      return json({ error: { code: 'SESSION_EXPIRED', message: 'Keep the draft open.', outcomeUnknown: false } }, 403);
+    });
+    const store = await createGristStore({ csrfToken: token });
+    const before = store.getSnapshot();
+    await assert.rejects(store.deleteLesson(lesson().id, { expectedVersion: 1 }), {
+      code: mode === 'repeat-expiry' ? 'SESSION_EXPIRED' : mode === 'demo' ? 'NOT_CONNECTED' : 'NETWORK_ERROR',
+      outcomeUnknown: false,
+    });
+    assert.equal(configReads, 1);
+    assert.equal(bodies.length, mode === 'repeat-expiry' ? 2 : 1);
+    if (bodies.length === 2) assert.equal(bodies[0], bodies[1]);
+    assert.deepEqual(store.getSnapshot(), before);
+  });
+});
+
+test('an earlier unknown outcome stays unknown through session recovery failures until acknowledged', async t => {
+  for (const operation of ['save', 'delete']) for (const recovery of ['config-failure', 'demo', 'repeat-expiry']) {
+    await t.test(`${operation}: ${recovery}`, async child => {
+      let phase = 'lost-response';
+      const submitted = [];
+      const acknowledged = lesson({ title: 'Saved draft', version: 2 });
+      child.mock.method(globalThis, 'fetch', async (path, options) => {
+        if (path === '/api/snapshot') return json(snapshot());
+        if (path === '/api/config') {
+          if (recovery === 'config-failure') throw new TypeError('Synthetic config failure');
+          return json({ mode: recovery === 'demo' ? 'demo' : 'grist', csrfToken: 'synthetic-new-session' });
+        }
+        submitted.push(JSON.parse(options.body));
+        if (phase === 'lost-response') throw new TypeError('Synthetic lost write response');
+        if (phase === 'recovery-failure') {
+          return json({ error: { code: 'SESSION_EXPIRED', message: 'This attempt was rejected before writing.', outcomeUnknown: false } }, 403);
+        }
+        if (phase === 'acknowledged') return json(operation === 'save'
+          ? { lesson: acknowledged, snapshot: snapshot([acknowledged]) }
+          : { lessonId: lesson().id, snapshot: snapshot([]) });
+        return json({ error: { code: 'VERSION_CONFLICT', message: 'This lesson changed.' } }, 409);
+      });
+      const store = await createGristStore({ csrfToken: token });
+      const before = store.getSnapshot();
+      const retry = () => operation === 'save'
+        ? store.saveLesson({ id: lesson().id, title: 'Saved draft' }, { expectedVersion: 1 })
+        : store.deleteLesson(lesson().id, { expectedVersion: 1 });
+      await assert.rejects(retry(), { code: 'NETWORK_ERROR', outcomeUnknown: true });
+      phase = 'recovery-failure';
+      await assert.rejects(retry(), error => {
+        assert.equal(error.outcomeUnknown, true);
+        assert.match(error.message, /earlier (save|deletion) attempt may have reached Grist/);
+        return true;
+      });
+      assert.deepEqual(store.getSnapshot(), before);
+      phase = 'acknowledged';
+      await retry();
+      assert.ok(submitted.every(item => item.mutationId === submitted[0].mutationId));
+      phase = 'new-attempt';
+      await assert.rejects(retry(), { code: 'VERSION_CONFLICT', outcomeUnknown: false });
+      assert.notEqual(submitted.at(-1).mutationId, submitted[0].mutationId, 'acknowledgment clears the pending identity and uncertainty');
+    });
+  }
+});
