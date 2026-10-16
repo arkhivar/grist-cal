@@ -164,7 +164,20 @@ Expected browser checks, not observations:
 - Open a new lesson and click either chip, or use Enter/Space/ArrowDown from the focused chip. Search by name, navigate with arrows, and select with Enter. Student/group options have distinct type labels even when their names match.
 - Choose a student, then a group, then another student. The chip and saved lesson classification should follow the final choice with no leftover references or extra attendance. Group not assigned remains available. Added title text stays intact.
 - Escape closes the picker before closing the editor. Tab moves to the next title control; Shift+Tab moves back. Clicking another chip switches pickers. Typing in search or pressing Enter on an empty result must not submit the lesson form.
-- Saved lessons allow teacher selection but keep the subject chip locked. Historical teacher/reference values remain readable. Duplicate opens an editable subject choice and requires an eligible teacher where the original assignment cannot be reused.
+- Saved lessons allow teacher selection and now permit same-kind subject correction (superseding the initial chip lock). Historical teacher/reference values remain readable. Duplicate opens a combined subject choice and requires an eligible teacher where the original assignment cannot be reused.
 - Refresh, failed saves and unchanged uncertain retries retain the selected IDs and editable title parts. A catalog rename changes the chip text; removal of a new-choice entry does not silently replace the draft selection.
 - Check desktop, 390px, short-window and touch layouts. The popup stays within the scrollable editor on narrow/short windows, options can be scrolled, long names wrap, focus is visible and the selected option is revealed when reopening. Confirm native combobox/screen-reader announcements separately.
 - Demo mode retains its original title and teacher fields, simulated failure and Reset controls.
+
+## Saved subject corrections and group-label removal — 2026-10-16
+
+All 331 automated tests pass. Isolated controller/store tests cover saved individual/group corrections, unchanged historical references, stale and failed saves, retries, legacy title conversion, retained group metadata and the attendance-unavailable fallback after an acknowledged correction. The connected server and updated assets respond over HTTP; no live writes were used for this update. Native interaction remains unverified under the existing URL restriction.
+
+Expected browser checks, not observations:
+
+- Open a saved individual lesson, search the subject chip and select another existing student. Only student choices appear. The title additions survive and an unsaved note explains that this corrects the lesson and its own attendance record. Save/reopen should show the selected student on the same lesson.
+- Open a saved group header and choose another group or Group not assigned. No students appear in this list. The notice explains that linked student attendance stays unchanged. The event subtitle must use the new group reference, never an old freeform label.
+- The live editor has no Group label field. Demo retains its original Group field. New and duplicate live drafts still offer the combined student/group choice.
+- Revert a changed choice and confirm the notice disappears and the draft is clean. Refresh and a failed save preserve the current unsaved selection and both title text parts.
+- Simulate an acknowledged individual correction followed by a failed full refresh: reopening shows Refresh needed in attendance, never the old student or a misleading zero count. A successful Refresh data restores the current attendance.
+- Repeat chip keyboard/focus, long-name and 390px checks above with a saved lesson and the new notice visible.

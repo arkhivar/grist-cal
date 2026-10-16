@@ -86,3 +86,23 @@ test('malformed or unsupported envelopes remain readable legacy text', () => {
     assert.equal(lessonTitleTextLength(raw), raw.length);
   }
 });
+
+test('saved subject reassignment binds legacy surrounding text to the new names and survives retry', () => {
+  const controller = createLessonTitleController({ automaticTitle: 'A.A. · Student One', referenceTitle: 'Student One',
+    titleOverride: 'Review: A.A. · Student One (online)', existing: true });
+  assert.deepEqual(controller.submissionFields(), {});
+  controller.updateAutomatic('B.B. · Student Two');
+  const draft = controller.submissionFields({ referencesChanged: true });
+  assert.equal(renderLessonTitle(draft.title, 'B.B. · Student Two'), 'Review: B.B. · Student Two (online)');
+  assert.deepEqual(controller.submissionFields({ referencesChanged: true }), draft);
+  controller.updateAutomatic('A.A. · Student One');
+  assert.deepEqual(controller.submissionFields({ referencesChanged: false }), {});
+});
+
+test('reference reassignment leaves existing encoded or unrelated legacy title values untouched', () => {
+  for (const titleOverride of ['', '  Revision class  ', encodeLessonTitle({ before: 'Review:', after: 'online' })]) {
+    const controller = createLessonTitleController({ automaticTitle: 'A.A. · Student One', referenceTitle: 'Student One', titleOverride, existing: true });
+    controller.updateAutomatic('B.B. · Student Two');
+    assert.deepEqual(controller.submissionFields({ referencesChanged: true }), {});
+  }
+});

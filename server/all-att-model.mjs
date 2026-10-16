@@ -136,7 +136,9 @@ export function normalizeAllAttSnapshot({ attendance = [], performance = [], fol
     const students = refs(fields.student);
     const groups = refs(fields.group2);
     const referencedGroupNames = groups.map(id => groupName(id, performanceById)).join(' · ');
-    const group = text(fields.Calendar_Group_Label) || referencedGroupNames;
+    // The removed freeform label remains stored metadata, never a second,
+    // potentially stale subject name after a group reference is changed.
+    const group = referencedGroupNames;
     const referenceTitle = lessonKind === 'individual'
       ? students.map(id => studentName(id, folksById)).join(', ')
       : referencedGroupNames || 'Group not assigned';

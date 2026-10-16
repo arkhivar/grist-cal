@@ -94,6 +94,118 @@ test('an acknowledged create or update succeeds when the follow-up snapshot cann
   }
 });
 
+test('acknowledged individual reassignment discards only stale attendance until a full refresh succeeds', async t => {
+  const original = lesson({ id: 'all-att:41', lessonKind: 'individual', studentIds: ['folks:1'], groupIds: [] });
+  const other = lesson({ id: 'all-att:42', lessonKind: 'group', studentIds: [], groupIds: ['per:40'] });
+  const before = snapshot([original, other]);
+  before.attendance = [
+    { ...before.attendance[0], id: 'att:41:1', lessonId: original.id, studentId: 'folks:1' },
+    { ...before.attendance[0], id: 'att:43:3', sourceRowId: 43, lessonId: other.id, studentId: 'folks:3' },
+  ];
+  const acknowledged = { ...original, title: 'Teacher · New student', studentIds: ['folks:2'], version: 2 };
+  const refreshed = { ...before, lessons: [acknowledged, other], attendance: [
+    { ...before.attendance[0], id: 'att:41:2', studentId: 'folks:2', studentName: 'New student', status: 'excused' },
+    before.attendance[1],
+  ] };
+  let reads = 0;
+  t.mock.method(globalThis, 'fetch', async (path, options) => {
+    if (path === '/api/snapshot') {
+      reads += 1;
+      if (reads === 1) return json(before);
+      if (reads === 2) throw new TypeError('Synthetic unavailable refresh');
+      return json(refreshed);
+    }
+    const { draft } = JSON.parse(options.body);
+    return json({ lesson: { ...acknowledged, ...(draft.room ? { room: draft.room, version: 3 } : {}) },
+      snapshot: null, refreshWarning: true });
+  });
+  const store = await createGristStore({ csrfToken: token });
+  const draft = { id: original.id, studentIds: ['folks:2'] };
+  const saved = await store.saveLesson(draft, { expectedVersion: original.version });
+  assert.equal(saved.refreshWarning, true);
+  assert.deepEqual(draft, { id: original.id, studentIds: ['folks:2'] }, 'Saving must not rewrite the caller’s draft');
+  let current = store.getSnapshot();
+  assert.deepEqual(current.lessons, [acknowledged, other]);
+  assert.deepEqual(current.attendance, [before.attendance[1]]);
+  assert.deepEqual(current.attendanceUnavailableLessonIds, [original.id]);
+  await assert.rejects(store.refresh(), { code: 'NETWORK_ERROR', outcomeUnknown: false });
+  assert.deepEqual(store.getSnapshot(), current, 'Failed refresh keeps the unavailable marker');
+  await store.saveLesson({ id: original.id, room: 'New room' }, { expectedVersion: 2 });
+  current = store.getSnapshot();
+  assert.equal(current.lessons[0].room, 'New room');
+  assert.deepEqual(current.attendance, [before.attendance[1]]);
+  assert.deepEqual(current.attendanceUnavailableLessonIds, [original.id], 'A later partial save cannot restore stale attendance');
+  assert.deepEqual(await store.refresh(), refreshed, 'Only authoritative snapshot data restores attendance and clears the marker');
+});
+
+test('a later full save snapshot clears unavailable attendance without changing unaffected records', async t => {
+  const original = lesson({ id: 'all-att:41', lessonKind: 'individual', studentIds: ['folks:1'], groupIds: [] });
+  const before = snapshot([original]);
+  before.attendance[0].lessonId = original.id;
+  const acknowledged = { ...original, studentIds: ['folks:2'], version: 2 };
+  const refreshed = snapshot([acknowledged]);
+  refreshed.attendance = [];
+  let writes = 0;
+  t.mock.method(globalThis, 'fetch', async path => {
+    if (path === '/api/snapshot') return json(before);
+    writes += 1;
+    return json({ lesson: acknowledged, snapshot: writes === 1 ? null : refreshed, ...(writes === 1 ? { refreshWarning: true } : {}) });
+  });
+  const store = await createGristStore({ csrfToken: token });
+  await store.saveLesson({ id: original.id, studentIds: ['folks:2'] }, { expectedVersion: 1 });
+  assert.deepEqual(store.getSnapshot().attendanceUnavailableLessonIds, [original.id]);
+  await store.saveLesson({ id: original.id, room: 'Room 2' }, { expectedVersion: 2 });
+  assert.deepEqual(store.getSnapshot(), refreshed, 'A full snapshot can establish that no attendance is recorded');
+});
+
+test('group reassignment and unchanged individual references retain cached attendance during partial refresh', async t => {
+  for (const kind of ['group', 'individual']) {
+    await t.test(kind, async t => {
+      const original = lesson({ lessonKind: kind,
+        studentIds: kind === 'individual' ? ['folks:1'] : [], groupIds: kind === 'group' ? ['per:40'] : [] });
+      const before = snapshot([original]);
+      const acknowledged = { ...original, groupIds: kind === 'group' ? ['per:41'] : [], room: 'New room', version: 2 };
+      t.mock.method(globalThis, 'fetch', async path => path === '/api/snapshot' ? json(before)
+        : json({ lesson: acknowledged, snapshot: null, refreshWarning: true }));
+      const store = await createGristStore({ csrfToken: token });
+      await store.saveLesson({ id: original.id, groupIds: acknowledged.groupIds, room: 'New room' }, { expectedVersion: 1 });
+      assert.deepEqual(store.getSnapshot().attendance, before.attendance);
+      assert.equal(store.getSnapshot().attendanceUnavailableLessonIds, undefined);
+    });
+  }
+});
+
+test('failed or uncertain student reassignment leaves cached attendance and draft intact until acknowledgement', async t => {
+  for (const unknown of [false, true]) {
+    await t.test(unknown ? 'uncertain outcome' : 'known rejection', async t => {
+      const original = lesson({ id: 'all-att:41', lessonKind: 'individual', studentIds: ['folks:1'], groupIds: [] });
+      const before = snapshot([original]);
+      before.attendance[0].lessonId = original.id;
+      const acknowledged = { ...original, studentIds: ['folks:2'], version: 2 };
+      const submissions = [];
+      t.mock.method(globalThis, 'fetch', async (path, options) => {
+        if (path === '/api/snapshot') return json(before);
+        submissions.push(JSON.parse(options.body));
+        if (submissions.length === 1) {
+          if (unknown) throw new TypeError('Synthetic lost response');
+          return json({ error: { code: 'SAVE_FAILED', message: 'Synthetic rejection.', outcomeUnknown: false } }, 503);
+        }
+        return json({ lesson: acknowledged, snapshot: null, refreshWarning: true });
+      });
+      const store = await createGristStore({ csrfToken: token });
+      const draft = { id: original.id, studentIds: ['folks:2'] };
+      await assert.rejects(store.saveLesson(draft, { expectedVersion: 1 }),
+        { code: unknown ? 'NETWORK_ERROR' : 'SAVE_FAILED', outcomeUnknown: unknown });
+      assert.deepEqual(store.getSnapshot(), before);
+      assert.deepEqual(draft, { id: original.id, studentIds: ['folks:2'] });
+      await store.saveLesson(draft, { expectedVersion: 1 });
+      assert.equal(submissions[1].mutationId, submissions[0].mutationId);
+      assert.deepEqual(store.getSnapshot().attendance, []);
+      assert.deepEqual(store.getSnapshot().attendanceUnavailableLessonIds, [original.id]);
+    });
+  }
+});
+
 test('failed refreshes preserve the last snapshot and leave the request queue usable', async t => {
   const before = snapshot();
   const after = snapshot([lesson({ title: 'Refreshed title', version: 2 })]);

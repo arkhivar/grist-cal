@@ -294,8 +294,7 @@ dialog::backdrop { background: rgb(24 24 27 / .24); }
 .title-capsule > span { min-width: 0; }
 .title-capsule:hover:not(:disabled), .title-capsule[aria-expanded="true"] { border-color: #a9a9a5; background: #e9e9e7; }
 .title-capsule .chip-chevron { width: 13px; height: 13px; }
-.title-capsule[data-locked="true"] { opacity: 1; }
-.title-capsule[data-locked="true"] .chip-chevron { display: none; }
+.subject-change-notice { padding: 8px 10px; border-radius: var(--radius); background: var(--accent-soft); color: #315a98; }
 .teacher-capsule { border-color: #dce6f7; background: var(--accent-soft); color: #315a98; }
 .teacher-capsule:hover:not(:disabled), .teacher-capsule[aria-expanded="true"] { border-color: #b3c8ec; background: #e3edfe; }
 .chip-picker { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 5; padding: 7px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 24px #18181b21; }

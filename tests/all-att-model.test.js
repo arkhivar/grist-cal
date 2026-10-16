@@ -182,10 +182,23 @@ test('automatic titles use reference names while explicit overrides and group me
   assert.deepEqual(result.lessons.map(lesson => lesson.title),
     ['Teacher One · Student One · Exam preparation', 'Teacher One · Group A · Custom title', 'Teacher One · Group not assigned']);
   assert.deepEqual(result.lessons.map(lesson => lesson.titleOverride), ['  Student One · Exam preparation  ', 'Custom title', '  ']);
-  assert.deepEqual(result.lessons.map(lesson => lesson.group), ['Old group label', 'Custom group label', 'Custom group label']);
+  assert.deepEqual(result.lessons.map(lesson => lesson.group), ['', 'Group A', '']);
   assert.deepEqual(rows, before);
   assert.equal(lessonFields(rows[0]).Calendar_Title, '  Student One · Exam preparation  ');
   assert.notEqual(lessonVersion(rows[0]), lessonVersion({ ...rows[0].fields, Calendar_Title: 'Changed metadata' }));
+});
+
+test('group reassignment displays and searches current reference names without rewriting the old label', () => {
+  const source = header(10, { Calendar_Group_Label: 'Former group' });
+  const before = normalize([source]);
+  source.fields.group2 = ['L', 999];
+  const after = normalize([source]);
+  assert.equal(before.lessons[0].group, 'Group A');
+  assert.equal(after.lessons[0].group, 'Group #999');
+  assert.equal(after.lessons[0].title, 'Teacher One · Group #999');
+  assert.equal(source.fields.Calendar_Group_Label, 'Former group');
+  assert.notEqual(lessonVersion(source), lessonVersion({ ...source.fields, Calendar_Group_Label: 'Changed metadata' }));
+  assert.doesNotMatch(JSON.stringify(after.lessons), /Former group/);
 });
 
 test('missing and multiple title references use stable readable names without lesson prefixes', () => {

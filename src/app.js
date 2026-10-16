@@ -44,7 +44,7 @@ async function start() {
   $('lesson-title').required = !isLive;
   $('demo-title-field').hidden = isLive;
   $('live-title-field').hidden = !isLive;
-  $('demo-teacher-field').hidden = isLive;
+  $('demo-lesson-details').hidden = isLive;
   $('lesson-teacher').required = !isLive;
   const sourceLabel = isLive ? (config.label || 'Grist sandbox') : 'Sample school';
   const readyText = isLive ? 'Connected to Grist' : 'Demo ready';
@@ -306,22 +306,27 @@ async function start() {
     if (isLive) {
       // Only deliberate title edits become stored overrides; reference names stay automatic.
       delete draft.title;
+      delete draft.group;
       draft.teacherId = selectedLessonTeacherId;
-      Object.assign(draft, titleController?.submissionFields(), identityController?.submissionFields());
+      Object.assign(draft, titleSubmissionFields(), identityController?.submissionFields());
     }
     return draft;
   }
 
   function syncTitleChips() {
     if (!isLive || !identityController) return;
-    const { locked } = identityController.getState();
+    const { selectionKind } = identityController.getState();
     $('lesson-teacher-chip').disabled = busy || refreshing;
-    $('lesson-subject-chip').disabled = busy || refreshing || locked;
-    $('lesson-subject-chip').dataset.locked = String(locked);
-    $('lesson-title-hint').textContent = locked
-      ? 'Choose a teacher using its chip. Student/group links are fixed for saved lessons. Add your own text on either side.'
+    $('lesson-subject-chip').disabled = busy || refreshing;
+    $('lesson-title-hint').textContent = selectionKind
+      ? `Choose a teacher or ${selectionKind} using the chips. Add your own text on either side.`
       : 'Choose a teacher and a student or group. The lesson type follows your choice. Add your own text on either side.';
     updateAutomaticTitle();
+  }
+
+  function titleSubmissionFields() {
+    return titleController?.submissionFields({ referencesChanged: Boolean(editor?.id &&
+      (identityController.hasChanges() || selectedLessonTeacherId !== editor.originalTeacherId)) });
   }
 
   function automaticEditorTitle() {
@@ -334,16 +339,22 @@ async function start() {
     if (!titleController) return;
     const state = titleController.getState();
     const names = automaticEditorTitle();
+    const identity = identityController.getState();
     $('lesson-title-teacher').textContent = names.teacherTitle;
     $('lesson-title-name').textContent = names.referenceTitle;
     $('lesson-teacher-chip').setAttribute('aria-label', `Teacher: ${names.teacherTitle}. Choose a teacher.`);
-    $('lesson-subject-chip').setAttribute('aria-label', `${identityController.getState().lessonKind === 'individual' ? 'Student' : 'Group'}: ${names.referenceTitle}.${identityController.getState().locked ? ' Fixed for this saved lesson.' : ' Choose a student or group.'}`);
+    $('lesson-subject-chip').setAttribute('aria-label', `${identity.lessonKind === 'individual' ? 'Student' : 'Group'}: ${names.referenceTitle}. Choose a ${identity.selectionKind || 'student or group'}.`);
+    const notice = editor?.id && identity.changed ? (identity.lessonKind === 'individual'
+      ? `Saving will assign this lesson and its attendance record to ${names.referenceTitle}.`
+      : 'Saving changes this lesson’s group. Its linked student attendance records stay as they are.') : '';
+    if ($('lesson-subject-notice').textContent !== notice) $('lesson-subject-notice').textContent = notice;
+    $('lesson-subject-notice').hidden = !notice;
     for (const side of ['before', 'after']) {
       const input = $(`lesson-title-${side}`);
       if (input.value !== state[side]) input.value = state[side];
       input.style.width = `${Math.max(11, state[side].length + 1)}ch`;
     }
-    const writesTitle = Object.hasOwn(titleController.submissionFields(), 'title');
+    const writesTitle = Object.hasOwn(titleSubmissionFields(), 'title');
     $('lesson-title-after').setCustomValidity(writesTitle && state.textLength > TITLE_TEXT_LIMIT
       ? `Use ${TITLE_TEXT_LIMIT} characters or fewer for your added title text.` : '');
   }
@@ -365,11 +376,13 @@ async function start() {
   }
 
   function openTitlePicker(kind) {
-    if (!isLive || !editor || busy || refreshing || (kind === 'subject' && identityController.getState().locked)) return;
+    if (!isLive || !editor || busy || refreshing) return;
     const teacher = kind === 'teacher';
-    $('lesson-picker-search').placeholder = teacher ? 'Search teachers…' : 'Search students or groups…';
+    const choiceLabel = teacher ? 'teachers' : identityController.getState().selectionKind === 'student' ? 'students'
+      : identityController.getState().selectionKind === 'group' ? 'groups' : 'students or groups';
+    $('lesson-picker-search').placeholder = `Search ${choiceLabel}…`;
     titlePicker.open({ trigger: $(teacher ? 'lesson-teacher-chip' : 'lesson-subject-chip'),
-      label: teacher ? 'teachers' : 'students or groups',
+      label: choiceLabel,
       getChoices: teacher ? editorTeacherChoices : query => identityController.getChoices(query),
       getSelectedKey: () => teacher ? selectedLessonTeacherId : identityController.getState().selectionKey,
       onSelect(choice) {
@@ -379,8 +392,7 @@ async function start() {
         updateAutomaticTitle();
       },
       onTab({ backwards }) {
-        const next = teacher ? (backwards ? 'lesson-title-before'
-          : identityController.getState().locked ? 'lesson-title-after' : 'lesson-subject-chip')
+        const next = teacher ? (backwards ? 'lesson-title-before' : 'lesson-subject-chip')
           : backwards ? 'lesson-teacher-chip' : 'lesson-title-after';
         $(next).focus();
       },
@@ -441,6 +453,12 @@ async function start() {
   }
 
   function renderAttendance(lessonId) {
+    if (snapshot.attendanceUnavailableLessonIds?.includes(lessonId)) {
+      $('attendance-count').textContent = 'Refresh needed';
+      $('attendance-count').title = 'Attendance could not refresh after the student changed.';
+      $('attendance-list').innerHTML = '<div class="empty-attendance">The lesson was saved, but its attendance could not refresh. Use Refresh data to see the current attendance.</div>';
+      return;
+    }
     const records = snapshot.attendance.filter(row => row.type === 'attendance' && row.lessonId === lessonId);
     const distinctStudents = new Set(records.map(row => row.studentId).filter(Boolean)).size;
     $('attendance-count').textContent = isLive
@@ -479,7 +497,6 @@ async function start() {
     $('lesson-actions').hidden = !existing;
     $('editor-version').textContent = isLive ? 'Saves to Grist' : existing ? 'Changes stay in this demo' : 'One lesson · one calendar event';
     if (!isLive) $('lesson-teacher').innerHTML = `${teacherChoices.teacherId ? '' : `<option value="" disabled>${teacherChoices.choices.length ? 'Choose a teacher' : 'No teachers available'}</option>`}${teacherChoices.choices.map(t => `<option value="${escape(t.id)}">${escape(t.name)}</option>`).join('')}`;
-    document.querySelector('label[for="lesson-group"]').textContent = isLive ? 'Group label (optional)' : 'Group';
     identityController = isLive ? createLessonIdentityController({ lesson, existing: Boolean(existing),
       students: snapshot.students || [], groups: snapshot.groups || [] }) : null;
     for (const input of $('lesson-form').querySelectorAll('[name]')) {

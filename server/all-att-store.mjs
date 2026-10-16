@@ -75,13 +75,16 @@ function candidateFrom(draft, existing, snapshot, sourceDuration) {
   if (!['group', 'individual'].includes(candidate.lessonKind)) {
     throw failure('VALIDATION_ERROR', 'Choose a group or individual lesson.', 400);
   }
-  if (existing) {
-    if (identityFields.some(field => !equal(candidate[field], existing[field]))) {
-      throw failure('VALIDATION_ERROR', 'The lesson type, student and group references cannot be changed on an existing lesson.', 400);
-    }
-  } else {
-    if (candidate.lessonKind === 'group' && candidate.studentIds.length) {
-      throw failure('VALIDATION_ERROR', 'A group lesson header cannot contain student attendance references.', 400);
+  if (existing && candidate.lessonKind !== existing.lessonKind) {
+    throw failure('VALIDATION_ERROR', 'An existing lesson cannot switch between individual and group. Create a new lesson for a different type.', 400);
+  }
+  // Historical missing/multiple references can be retained exactly. A new
+  // subject selection must match the current catalog and keep the row's kind,
+  // so a lesson can never become an attendance-only row through this API.
+  const changedSubject = !existing || ['studentIds', 'groupIds'].some(field => !equal(candidate[field], existing[field]));
+  if (changedSubject) {
+    if (candidate.lessonKind === 'group' && (candidate.studentIds.length || (existing && candidate.groupIds.length > 1))) {
+      throw failure('VALIDATION_ERROR', 'Choose one group or Group not assigned, without student attendance references.', 400);
     }
     if (candidate.lessonKind === 'individual' && (candidate.studentIds.length !== 1 || candidate.groupIds.length)) {
       throw failure('VALIDATION_ERROR', 'Choose exactly one student and no group for an individual lesson.', 400);
@@ -199,6 +202,7 @@ export function createAllAttStore({ client } = {}) {
     const displayedLesson = isUpdate ? snapshot.lessons.find(lesson => lesson.id === draft.id) : null;
     const existing = displayedLesson ? { ...displayedLesson,
       title: typeof current.fields.Calendar_Title === 'string' ? current.fields.Calendar_Title : '',
+      group: typeof current.fields.Calendar_Group_Label === 'string' ? current.fields.Calendar_Group_Label : '',
     } : null;
     if (isUpdate && !existing) throw failure('VERSION_CONFLICT', 'This lesson needs valid scheduling data before it can be edited.', 409);
     const sourceDuration = current?.fields.Duration_Minutes;
@@ -248,7 +252,8 @@ export function createAllAttStore({ client } = {}) {
       // old endpoints independently can make a repeated end differ by 1 ms.
       const sameEnd = equal(candidate.end, existing.end) || (!Number.isInteger(sourceDuration * 60000) &&
         Math.abs(Date.parse(candidate.end) - Date.parse(existing.end)) <= 1);
-      if (sameEnd && editableFields.filter(field => field !== 'end').every(field => equal(candidate[field], existing[field]))) {
+      if (sameEnd && [...editableFields.filter(field => field !== 'end'), ...identityFields]
+        .every(field => equal(candidate[field], existing[field]))) {
         return savedLesson(tables, current);
       }
       throw failure('VERSION_CONFLICT', 'This save identifier was already used for another edit. Refresh before continuing.', 409);
@@ -258,6 +263,8 @@ export function createAllAttStore({ client } = {}) {
     for (const field of editableFields) {
       if (field !== 'end' && !equal(candidate[field], existing[field])) changes[fieldsByName[field]] = values[fieldsByName[field]];
     }
+    if (!equal(candidate.studentIds, existing.studentIds)) changes.student = ['L', ...candidate.studentIds.map(id => Number(id.slice(6)))];
+    if (!equal(candidate.groupIds, existing.groupIds)) changes.group2 = ['L', ...candidate.groupIds.map(id => Number(id.slice(4)))];
     if (!equal(values.Duration_Minutes, sourceDuration)) changes.Duration_Minutes = values.Duration_Minutes;
     const expected = { ...originalFields, ...changes };
     if (Object.hasOwn(changes, 'start') || Object.hasOwn(changes, 'Duration_Minutes')) {

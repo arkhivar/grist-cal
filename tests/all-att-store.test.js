@@ -115,8 +115,8 @@ const freshDraft = () => ({ clientId: NEW_UID, type: 'lesson', title: 'New lesso
   start: '2026-10-14T10:00:00+10:00', end: '2026-10-14T11:00:00+10:00', group: '', room: '',
   participantText: '', checklist: '', notes: '', status: 'scheduled', lessonKind: 'group', studentIds: [], groupIds: [] });
 const groupLesson = async store => (await store.getSnapshot()).lessons.find(lesson => lesson.id === 'all-att:7');
-// The editor omits untouched title metadata instead of submitting its composed display.
-const editingDraft = ({ title, autoTitle, referenceTitle, titleOverride, ...lesson }) => lesson;
+// The editor omits untouched title metadata and the removed freeform group label.
+const editingDraft = ({ title, autoTitle, referenceTitle, titleOverride, group, ...lesson }) => lesson;
 
 test('ALL_ATT snapshot projects scheduling sources and date metadata once, never the legacy lesson table', async () => {
   const client = mockClient();
@@ -451,11 +451,13 @@ test('a retry preserves sub-millisecond source duration when moving rounds the t
     { code: 'VERSION_CONFLICT' });
 });
 
-test('ALL_ATT existing row identity and source attendance rows cannot be edited as lessons', async () => {
+test('ALL_ATT saved lesson kinds stay fixed and source attendance rows cannot be edited as lessons', async () => {
   const client = mockClient();
   const store = createAllAttStore({ client });
   const lesson = await groupLesson(store);
-  for (const patch of [{ lessonKind: 'individual' }, { studentIds: ['folks:31'] }, { groupIds: [] }]) {
+  for (const patch of [{ lessonKind: 'individual', studentIds: ['folks:31'], groupIds: [] },
+    { studentIds: ['folks:31'] }, { groupIds: ['per:40', 'per:17'] }, { groupIds: ['per:17'] },
+    { groupIds: ['per:999'] }, { groupIds: ['per:0'] }, { groupIds: 'per:40' }]) {
     await assert.rejects(store.saveLesson({ ...editingDraft(lesson), ...patch }, { expectedVersion: lesson.version, mutationId: MUTATION }),
       { code: 'VALIDATION_ERROR', status: 400 });
   }
@@ -463,7 +465,174 @@ test('ALL_ATT existing row identity and source attendance rows cannot be edited 
     { expectedVersion: lessonVersion(client.tables.ALL_ATT[1]), mutationId: MUTATION }), { code: 'VALIDATION_ERROR' });
   await assert.rejects(store.deleteLesson('all-att:55',
     { expectedVersion: lessonVersion(client.tables.ALL_ATT[1]), mutationId: MUTATION }), { code: 'VALIDATION_ERROR' });
+  const individual = (await store.getSnapshot()).lessons.find(item => item.id === 'all-att:56');
+  for (const patch of [{ lessonKind: 'group', studentIds: [], groupIds: ['per:40'] }, { studentIds: [] },
+    { studentIds: ['folks:31', 'folks:32'] }, { studentIds: ['folks:999'] }, { groupIds: ['per:40'] },
+    { studentIds: ['folks:0'] }, { studentIds: 'folks:31' }]) {
+    await assert.rejects(store.saveLesson({ ...editingDraft(individual), ...patch },
+      { expectedVersion: individual.version, mutationId: MUTATION }), { code: 'VALIDATION_ERROR', status: 400 });
+  }
   assert.equal(client.writes.length, 0);
+});
+
+test('changing a saved individual student keeps the row, scheduling, title additions and attendance state', async () => {
+  for (const attendanceStatus of ['recorded', 'pending']) {
+    const client = mockClient();
+    const source = client.tables.ALL_ATT[2];
+    source.fields.Calendar_UID = NEW_UID;
+    source.fields.Calendar_Title = encodeLessonTitle({ before: 'Review: ', after: ' (bring book)' });
+    source.fields.Calendar_Attendance = attendanceStatus;
+    const store = createAllAttStore({ client });
+    const snapshot = await store.getSnapshot();
+    const lesson = snapshot.lessons.find(item => item.id === 'all-att:56');
+    const before = clone(client.tables);
+    const saved = await store.saveLesson({ ...editingDraft(lesson), studentIds: ['folks:31'] },
+      { expectedVersion: lesson.version, mutationId: MUTATION });
+    assert.equal(saved.id, lesson.id);
+    assert.equal(saved.lessonKind, 'individual');
+    assert.deepEqual(saved.studentIds, ['folks:31']);
+    assert.deepEqual(saved.groupIds, []);
+    assert.equal(saved.title, 'Review: t1 · Fictional Student (bring book)');
+    assert.deepEqual(client.writes[0].body.records[0].fields, { Calendar_Mutation: MUTATION, student: ['L', 31] });
+    assert.deepEqual(client.writes[0].body.records[0].require,
+      { id: source.id, Calendar_Revision: before.ALL_ATT[2].fields.Calendar_Revision });
+    const { Calendar_Revision, ...fields } = source.fields;
+    const { Calendar_Revision: oldRevision, ...oldFields } = before.ALL_ATT[2].fields;
+    assert.deepEqual(fields, { ...oldFields, student: ['L', 31], Calendar_Mutation: MUTATION });
+    assert.deepEqual(client.tables.ALL_ATT.slice(0, 2), before.ALL_ATT.slice(0, 2));
+    assert.deepEqual(client.tables.Calendar_Lessons, before.Calendar_Lessons);
+    const attendance = (await store.getSnapshot()).attendance.filter(row => row.lessonId === saved.id);
+    assert.equal(attendance.length, attendanceStatus === 'pending' ? 0 : 1);
+    if (attendance.length) {
+      assert.equal(attendance[0].sourceRowId, source.id);
+      assert.equal(attendance[0].studentId, 'folks:31');
+      assert.equal(attendance[0].status, attendanceStatus);
+    }
+  }
+});
+
+test('changing or clearing a saved group only updates its header and preserves all child attendance', async () => {
+  for (const groupIds of [['per:41'], []]) {
+    const client = mockClient();
+    client.tables.PERFORMANCE.push({ id: 41, fields: { name: 'Group B', label: 'group' } });
+    client.tables.ALL_ATT[0].fields.Calendar_UID = `all-att-group:${'a'.repeat(64)}`;
+    client.tables.ALL_ATT[0].fields.Calendar_Title = '';
+    const store = createAllAttStore({ client });
+    const snapshot = await store.getSnapshot();
+    const lesson = snapshot.lessons.find(item => item.id === 'all-att:7');
+    const before = clone(client.tables.ALL_ATT);
+    const saved = await store.saveLesson({ ...editingDraft(lesson), groupIds },
+      { expectedVersion: lesson.version, mutationId: MUTATION });
+    assert.equal(saved.id, lesson.id);
+    assert.equal(saved.lessonKind, 'group');
+    assert.deepEqual(saved.groupIds, groupIds);
+    assert.equal(saved.title, groupIds.length ? 't1 · Group B' : 't1 · Group not assigned');
+    const expectedRefs = groupIds.length ? ['L', 41] : ['L'];
+    assert.deepEqual(client.writes[0].body.records[0].fields, { Calendar_Mutation: MUTATION, group2: expectedRefs });
+    const { Calendar_Revision, ...fields } = client.tables.ALL_ATT[0].fields;
+    const { Calendar_Revision: oldRevision, ...oldFields } = before[0].fields;
+    assert.deepEqual(fields, { ...oldFields, group2: expectedRefs, Calendar_Mutation: MUTATION });
+    assert.deepEqual(client.tables.ALL_ATT.slice(1), before.slice(1));
+    assert.deepEqual((await store.getSnapshot()).attendance, snapshot.attendance);
+  }
+});
+
+test('historical missing and multiple subjects survive unrelated saves until a valid single replacement is chosen', async () => {
+  for (const [index, field, sourceRefs, replacement] of [
+    [0, 'group2', null, ['per:40']], [0, 'group2', ['L', 999], []],
+    [0, 'group2', ['L', 999, 40, 999], ['per:40']],
+    [2, 'student', ['L', 999], ['folks:31']], [2, 'student', ['L', 32, 31, 999, 31], ['folks:32']],
+  ]) {
+    const client = mockClient();
+    client.tables.ALL_ATT[index].fields[field] = clone(sourceRefs);
+    const store = createAllAttStore({ client });
+    const lesson = (await store.getSnapshot()).lessons.find(item => item.sourceRowId === client.tables.ALL_ATT[index].id);
+    const retained = await store.saveLesson({ ...editingDraft(lesson), room: 'New room' },
+      { expectedVersion: lesson.version, mutationId: MUTATION });
+    assert.deepEqual(client.tables.ALL_ATT[index].fields[field], sourceRefs);
+    assert.deepEqual(client.writes[0].body.records[0].fields, { Calendar_Mutation: MUTATION, Calendar_Room: 'New room' });
+    const identityField = field === 'student' ? 'studentIds' : 'groupIds';
+    const replaced = await store.saveLesson({ ...editingDraft(retained), [identityField]: replacement },
+      { expectedVersion: retained.version, mutationId: OTHER_MUTATION });
+    assert.deepEqual(replaced[identityField], replacement);
+    assert.deepEqual(Object.keys(client.writes[1].body.records[0].fields).sort(), ['Calendar_Mutation', field].sort());
+  }
+});
+
+test('completed subject saves retry after missing catalog records and reject a reused mutation with another subject', async () => {
+  for (const [id, identityField, selection, table, catalogId, other] of [
+    ['all-att:56', 'studentIds', ['folks:31'], 'FOLKS', 31, ['folks:32']],
+    ['all-att:7', 'groupIds', ['per:41'], 'PERFORMANCE', 41, ['per:40']],
+  ]) {
+    const client = mockClient({ afterMutation: () => { throw networkFailure(); } });
+    client.tables.PERFORMANCE.push({ id: 41, fields: { name: 'Group B', label: 'group' } });
+    const store = createAllAttStore({ client });
+    const lesson = (await store.getSnapshot()).lessons.find(item => item.id === id);
+    const draft = { ...editingDraft(lesson), [identityField]: selection };
+    const options = { expectedVersion: lesson.version, mutationId: MUTATION };
+    const saved = await store.saveLesson(draft, options);
+    client.tables[table] = client.tables[table].filter(row => row.id !== catalogId);
+    const retry = await store.saveLesson(draft, options);
+    assert.equal(retry.id, saved.id);
+    assert.equal(retry.version, saved.version);
+    assert.deepEqual(retry[identityField], selection);
+    assert.equal(client.writes.length, 1);
+    await assert.rejects(store.saveLesson({ ...draft, [identityField]: other }, options), { code: 'VERSION_CONFLICT' });
+    assert.equal(client.writes.length, 1);
+  }
+});
+
+test('subject revisions reject stale edits before writing and concurrent edits atomically', async () => {
+  for (const racing of [false, true]) {
+    const change = tables => { tables.ALL_ATT[2].fields.student = ['L', 999]; };
+    const client = mockClient(racing ? { beforeMutation: change } : {});
+    const store = createAllAttStore({ client });
+    const lesson = (await store.getSnapshot()).lessons.find(item => item.id === 'all-att:56');
+    if (!racing) change(client.tables);
+    await assert.rejects(store.saveLesson({ ...editingDraft(lesson), studentIds: ['folks:31'] },
+      { expectedVersion: lesson.version, mutationId: MUTATION }), { code: 'VERSION_CONFLICT', status: 409 });
+    assert.deepEqual(client.tables.ALL_ATT[2].fields.student, ['L', 999]);
+    assert.equal(client.tables.ALL_ATT[2].fields.Calendar_Mutation, '');
+    assert.equal(client.writes.length, racing ? 1 : 0);
+  }
+});
+
+test('failed subject writes preserve every row and failed verification checks the requested references', async () => {
+  for (const known of [false, true]) {
+    const client = mockClient({ rejectMutation: Object.assign(new Error('private-upstream'), { mayHaveMutated: !known, status: 503 }) });
+    const store = createAllAttStore({ client });
+    const lesson = (await store.getSnapshot()).lessons.find(item => item.id === 'all-att:56');
+    const before = clone(client.tables);
+    await assert.rejects(store.saveLesson({ ...editingDraft(lesson), studentIds: ['folks:31'] },
+      { expectedVersion: lesson.version, mutationId: MUTATION }), error =>
+      error.code === (known ? 'SAVE_FAILED' : 'SAVE_UNCERTAIN') && Boolean(error.outcomeUnknown) === !known);
+    assert.deepEqual(client.tables, before);
+  }
+  const client = mockClient({ afterMutation: tables => { tables.ALL_ATT[2].fields.student = ['L', 32]; } });
+  const store = createAllAttStore({ client });
+  const lesson = (await store.getSnapshot()).lessons.find(item => item.id === 'all-att:56');
+  await assert.rejects(store.saveLesson({ ...editingDraft(lesson), studentIds: ['folks:31'] },
+    { expectedVersion: lesson.version, mutationId: MUTATION }), { code: 'VERSION_CONFLICT' });
+});
+
+test('omitting removed group label metadata preserves its raw value without freezing names on saves or retries', async () => {
+  for (const raw of ['', '  Separate metadata  ']) {
+    const client = mockClient();
+    client.tables.ALL_ATT[0].fields.Calendar_Group_Label = raw;
+    const store = createAllAttStore({ client });
+    const lesson = await groupLesson(store);
+    client.tables.PERFORMANCE.find(row => row.id === 40).fields.name = 'Renamed group';
+    const draft = { ...editingDraft(lesson), room: 'New room' };
+    const options = { expectedVersion: lesson.version, mutationId: MUTATION };
+    const saved = await store.saveLesson(draft, options);
+    assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Group_Label, raw);
+    assert.deepEqual(client.writes[0].body.records[0].fields, { Calendar_Mutation: MUTATION, Calendar_Room: 'New room' });
+    assert.equal((await store.saveLesson(draft, options)).version, saved.version);
+    assert.equal(client.writes.length, 1);
+    const { id, version, ...copy } = editingDraft(saved);
+    await store.saveLesson({ ...copy, clientId: NEW_UID, title: '', status: 'scheduled' }, { mutationId: OTHER_MUTATION });
+    assert.equal(client.tables.ALL_ATT.at(-1).fields.Calendar_Group_Label, '');
+  }
 });
 
 test('ALL_ATT creates one row for an individual booking with pending attendance and no inherited history', async () => {
@@ -611,7 +780,8 @@ test('omitted custom titles retain raw text while explicit blank restores automa
   assert.equal(cleared.title, 't1 · Group A');
   assert.equal(cleared.autoTitle, 't1 · Group A');
   assert.equal(cleared.titleOverride, '');
-  assert.equal(cleared.group, 'Separate group metadata');
+  assert.equal(cleared.group, 'Group A');
+  assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Group_Label, 'Separate group metadata');
   assert.deepEqual(client.writes[1].body.records[0].fields, { Calendar_Mutation: OTHER_MUTATION, Calendar_Title: '' });
 });
 

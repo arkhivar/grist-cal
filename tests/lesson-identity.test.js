@@ -9,6 +9,7 @@ const create = (options = {}) => createLessonIdentityController({ students, grou
 test('new lessons default to an unassigned group without inventing a reference', () => {
   assert.deepEqual(create().getState(), {
     lessonKind: 'group', studentIds: [], groupIds: [], referenceTitle: 'Group not assigned', selectionKey: 'group:none', locked: false,
+    selectionKind: null, changed: false,
   });
 });
 
@@ -42,23 +43,99 @@ test('search matches exact names and readable type labels without truncating res
   assert.equal(controller.getChoices('not present').length, 0);
 });
 
-test('existing identities are immutable even when select is called directly', () => {
+test('saved individual lessons allow choosing a current student and omit unchanged or reverted assignments', () => {
   const controller = create({ existing: true, lesson: { lessonKind: 'individual', studentIds: ['folks:2'], groupIds: [] } });
-  const initial = controller.getState();
-  assert.equal(initial.locked, true);
-  for (const key of ['per:3', 'folks:10', 'group:none', 'missing']) assert.deepEqual(controller.select(key), initial);
+  assert.equal(controller.getState().locked, false);
+  assert.equal(controller.getState().selectionKind, 'student');
+  assert.equal(controller.hasChanges(), false);
+  assert.deepEqual(controller.submissionFields(), {});
+  assert.deepEqual(controller.getChoices().map(choice => choice.key), ['folks:10', 'folks:2']);
+  assert.equal(controller.getChoices('group').length, 0);
+  assert.equal(controller.select('folks:10').referenceTitle, 'Shared name');
+  assert.equal(controller.getState().changed, true);
+  assert.equal(controller.hasChanges(), true);
+  assert.deepEqual(controller.submissionFields(), { lessonKind: 'individual', studentIds: ['folks:10'], groupIds: [] });
+  controller.select('folks:2');
+  assert.equal(controller.hasChanges(), false);
+  assert.deepEqual(controller.submissionFields(), {});
+});
+
+test('saved group lessons allow another group or no group without converting to individual', () => {
+  const controller = create({ existing: true, lesson: { lessonKind: 'group', studentIds: [], groupIds: ['per:3'] } });
+  assert.equal(controller.getState().selectionKind, 'group');
+  assert.deepEqual(controller.getChoices().map(choice => choice.key), ['group:none', 'per:3', 'per:10']);
+  assert.deepEqual(controller.submissionFields(), {});
+  controller.select('per:10');
+  assert.deepEqual(controller.submissionFields(), { lessonKind: 'group', studentIds: [], groupIds: ['per:10'] });
+  assert.equal(controller.select('group:none').referenceTitle, 'Group not assigned');
+  assert.deepEqual(controller.submissionFields(), { lessonKind: 'group', studentIds: [], groupIds: [] });
+  controller.select('per:3');
+  assert.deepEqual(controller.submissionFields(), {});
+});
+
+test('saved lessons reject wrong-kind and unknown keys without changing the pending assignment', () => {
+  const cases = [
+    { lesson: { lessonKind: 'individual', studentIds: ['folks:2'], groupIds: [] }, selected: 'folks:10', rejected: ['per:3', 'group:none'] },
+    { lesson: { lessonKind: 'group', studentIds: [], groupIds: ['per:3'] }, selected: 'per:10', rejected: ['folks:2'] },
+  ];
+  for (const { lesson, selected, rejected } of cases) {
+    const controller = create({ existing: true, lesson });
+    controller.select(selected);
+    const before = controller.getState();
+    const payload = controller.submissionFields();
+    for (const key of rejected) {
+      assert.throws(() => controller.select(key), /saved lesson type cannot be changed/);
+      assert.deepEqual(controller.getState(), before);
+    }
+    assert.throws(() => controller.select('missing'), /existing student or group/);
+    assert.deepEqual(controller.submissionFields(), payload);
+  }
 });
 
 test('historical missing and multiple references remain visible but are not new choices', () => {
   const controller = create({ existing: true, lesson: { lessonKind: 'group', studentIds: [], groupIds: ['per:999', 'per:10', 'per:3', 'per:3'] } });
   assert.deepEqual(controller.getState(), {
     lessonKind: 'group', studentIds: [], groupIds: ['per:3', 'per:10', 'per:999'],
-    referenceTitle: 'Group Three · Shared name · Group #999', selectionKey: null, locked: true,
+    referenceTitle: 'Group Three · Shared name · Group #999', selectionKey: null, selectionKind: 'group', locked: false, changed: false,
   });
+  assert.deepEqual(controller.submissionFields(), {});
   assert.equal(controller.getChoices().some(choice => choice.key === 'per:999'), false);
   const individual = create({ existing: true, lesson: { lessonKind: 'individual', studentIds: ['folks:12', 'folks:2'], groupIds: [] } });
   assert.equal(individual.getState().referenceTitle, 'Student Two, Student #12');
   assert.equal(individual.getState().selectionKey, null);
+  assert.deepEqual(individual.submissionFields(), {});
+  assert.deepEqual(controller.select('per:10').groupIds, ['per:10']);
+  assert.deepEqual(controller.submissionFields(), { lessonKind: 'group', studentIds: [], groupIds: ['per:10'] });
+  assert.deepEqual(individual.select('folks:10').studentIds, ['folks:10']);
+  assert.deepEqual(individual.submissionFields(), { lessonKind: 'individual', studentIds: ['folks:10'], groupIds: [] });
+});
+
+test('saved historical missing references survive refresh until deliberately replaced', () => {
+  const controller = create({ existing: true, lesson: { lessonKind: 'individual', studentIds: ['folks:99'], groupIds: [] } });
+  assert.equal(controller.getState().referenceTitle, 'Student #99');
+  controller.updateCatalogs({ students: [{ id: 'folks:2', name: 'Current Student' }] });
+  assert.equal(controller.getState().selectionKey, 'folks:99');
+  assert.deepEqual(controller.submissionFields(), {});
+  assert.throws(() => controller.select('folks:99'), /existing student or group/);
+  assert.deepEqual(controller.submissionFields(), {});
+  controller.select('folks:2');
+  assert.deepEqual(controller.submissionFields(), { lessonKind: 'individual', studentIds: ['folks:2'], groupIds: [] });
+});
+
+test('saved assignment retries preserve the chosen student through renames and catalog removal', () => {
+  const controller = create({ existing: true, lesson: { lessonKind: 'individual', studentIds: ['folks:2'], groupIds: [] } });
+  controller.updateCatalogs({ students: [{ id: 'folks:2', name: 'Renamed Original' }, students[1]] });
+  assert.equal(controller.getState().referenceTitle, 'Renamed Original');
+  assert.deepEqual(controller.submissionFields(), {});
+  controller.select('folks:10');
+  const failedSavePayload = controller.submissionFields();
+  controller.updateCatalogs({ students: [{ id: 'folks:10', name: 'Renamed Selection' }] });
+  assert.equal(controller.getState().referenceTitle, 'Renamed Selection');
+  assert.deepEqual(controller.submissionFields(), failedSavePayload);
+  controller.updateCatalogs({ students: [] });
+  assert.equal(controller.getState().referenceTitle, 'Student #10');
+  assert.deepEqual(controller.submissionFields(), failedSavePayload);
+  assert.equal(controller.hasChanges(), true);
 });
 
 test('an untouched duplicate preserves missing or multiple references until explicitly replaced', () => {

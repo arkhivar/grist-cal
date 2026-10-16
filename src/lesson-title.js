@@ -47,6 +47,8 @@ export function createLessonTitleController({ automaticTitle, referenceTitle = a
   let automatic = automaticTitle;
   let parts = parseLessonTitle(titleOverride, automatic, referenceTitle);
   const initial = { ...parts };
+  const legacyNames = !storedParts(titleOverride) && [automaticTitle, referenceTitle]
+    .some(name => name && titleOverride.includes(name));
   const getState = () => ({ ...parts, automaticTitle: automatic, value: composeTitle(parts, automatic),
     textLength: parts.before.length + parts.after.length });
   return {
@@ -62,8 +64,10 @@ export function createLessonTitleController({ automaticTitle, referenceTitle = a
     },
     // Untouched existing metadata is omitted, including older plain-text values.
     // Reverting an edit also restores the original dirty-draft state.
-    submissionFields() {
-      return existing && parts.before === initial.before && parts.after === initial.after
+    submissionFields({ referencesChanged = false } = {}) {
+      // A deliberate reassignment must not leave the old names embedded in a
+      // legacy plain-text title. Persist its surrounding text with the new links.
+      return existing && parts.before === initial.before && parts.after === initial.after && !(referencesChanged && legacyNames)
         ? {} : { title: encodeLessonTitle(parts) };
     },
   };

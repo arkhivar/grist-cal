@@ -153,6 +153,17 @@ export async function createGristStore({ csrfToken } = {}) {
         if (result.snapshot === null && result.refreshWarning === true) {
           const next = getSnapshot();
           const index = next.lessons.findIndex(lesson => lesson.id === result.lesson.id);
+          const previous = next.lessons[index];
+          if (previous?.lessonKind === 'individual' && result.lesson.lessonKind === 'individual' &&
+            stableKey(previous.studentIds) !== stableKey(result.lesson.studentIds)) {
+            // The confirmed row has a different student, but formula-derived
+            // attendance was not refreshed. Do not show the previous student's
+            // cached record or invent a new status from the save response.
+            next.attendance = next.attendance.filter(row => row.lessonId !== result.lesson.id);
+            next.attendanceUnavailableLessonIds = [...new Set([
+              ...(next.attendanceUnavailableLessonIds || []), result.lesson.id,
+            ])];
+          }
           if (index === -1) next.lessons.push(copy(result.lesson));
           else next.lessons[index] = copy(result.lesson);
           publish(next);
