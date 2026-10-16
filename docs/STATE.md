@@ -2,6 +2,18 @@
 
 Updated: 2026-10-16 (Asia/Vladivostok).
 
+## Infrastructure and rollout track — 2026-10-16
+
+The user opened a parallel infrastructure track. Its first milestone is self-hosted staging from a sandbox copy with a proven full-instance restore. Sign-in and enforced teacher permissions gate the subsequent pilot; SeaTable remains the production source until migration and everyday workflows are verified. The staging sequence and acceptance evidence are in [PLAN.md](PLAN.md), with authentication details in [IDPS_AND_AUTH.md](../IDPS_AND_AUTH.md). Puppet implementation belongs in the separate infrastructure repository.
+
+Preparation completed: reviewed local server boundaries and current Grist/Authentik documentation; recorded the backup/restore drill and pilot gates. Read-only sandbox requests confirmed existing PERFORMANCE.name, label and email fields. The 17 exact team rows all have populated email values: 16 pass a basic school-address format check, one fails basic email syntax, and none of the team addresses duplicates another PERFORMANCE address after trimming/case normalization. This is a syntax/uniqueness check, not mailbox ownership or login verification. No roster values or schema were changed.
+
+The current server still uses one service-account client and shared snapshot state; its SQL reads are unsuitable for the intended restricted teacher identities. No authentication implementation, account provisioning or ACL changes were made. Current documentation distinguishes activated Grist native OIDC/OAuth apps from the Community forwarded-header route; neither route has been selected or tested on a host.
+
+Cloned arkhivar/puppet locally and reviewed its instructions and deployment conventions without modifying it. It is the production Puppet tree, with per-node profiles, Hiera/eyaml secrets and NetBird-only management. The user confirmed the Grist/authentication/backup setup is new work. Staging should use a dedicated opt-in profile; no production host was contacted or classified.
+
+**Staging and restore are not yet executed.** The user identified `arkhivar/puppet` as the private fleet-wide infrastructure repository; target host/access and backup destination remain to be established. No document export, deployment, backup job, restore or production migration has been performed by this track. Mail at the school's standardized domain is user-reported operational via HostUp/cPanel; IdP enrollment and recovery delivery have not been tested here.
+
 ## Foundation and interface
 
 The local checkout was established from `arkhivar/grist-cal`, original main commit `78bb31d`. Work is on `codex/standalone-calendar-demo`. The design reference is `arkhivar/grist` at `9bda49cdcfd4a23ff2c5c120cf4378737ded9f2e`.
@@ -136,4 +148,4 @@ GitHub Actions runs the repository checks on pushes and pull requests. Passing l
 
 ## Next
 
-Review the single-table calendar in practical scheduling workflows and complete browser checks for the new editor controls. The user has removed the obsolete lesson table and its two ALL_ATT fields; further column cleanup requires a separate dependency review and decision. Date-range loading and realistic scale measurements remain pending. Recurrence, teacher authentication, production permission enforcement and deployment remain future work. Grist Cloud is still a development sandbox; production operations continue in SeaTable. Authentik, NetBird and Puppet remain candidates for the eventual self-hosted teacher pilot.
+The UX track continues practical scheduling and browser checks for the new editor controls. Further column cleanup requires a separate dependency review and decision; date-range loading, realistic scale measurements and recurrence remain pending. The infrastructure track inspects arkhivar/puppet, establishes the host/backup destination, deploys isolated staging and executes the independent restore drill in PLAN.md. Teacher authentication and permission enforcement are required before the observed-week pilot. Grist Cloud remains a development sandbox and SeaTable remains production.
