@@ -137,7 +137,7 @@ The registry contains:
 | `Holiday_Name` | Manually maintained holiday text |
 | `Academic_Term` | Manually maintained term text |
 
-The additive setup also creates formula references named `Calendar_Date`: `ALL_ATT.Calendar_Date` derives its date from `ALL_ATT.start`; with `--include-transactions`, `Transactions.Calendar_Date` derives from `Transactions.datetime`. DateTime sources are converted explicitly to the **Asia/Vladivostok** calendar date before lookup. A Date source is used directly. A missing or ambiguous registry date yields an empty reference rather than an arbitrary match. The original timestamp remains canonical and is never replaced by the reference.
+The additive setup creates `ALL_ATT.DateRegistry`, a formula reference deriving its date from `ALL_ATT.start`; with `--include-transactions`, `Transactions.Calendar_Date` derives from `Transactions.datetime`. The ALL_ATT reference was renamed from Calendar_Date on 2026-10-16; setup does not recreate the former name or silently migrate older schemas. Its weekday lookup is `$DateRegistry.Day`, and its displayed date is `$DateRegistry.Date`. DateTime sources are converted explicitly to the **Asia/Vladivostok** calendar date before lookup. A Date source is used directly. A missing or ambiguous registry date yields an empty reference rather than an arbitrary match. The original timestamp remains canonical and is never replaced by the reference.
 
 Population inserts missing dates in batches, keyed by `Date`, and leaves existing dates and their manual school policy, holiday names and terms untouched. It verifies the requested coverage and can be rerun after partial completion or uncertain responses. Invalid ranges are rejected before schema changes. Duplicate or invalid existing registry dates stop population for review; they are not overwritten. Exact definitions are in [`server/date-registry.mjs`](../server/date-registry.mjs).
 
@@ -145,7 +145,7 @@ Existing day, parity and month helper columns remain in place with their definit
 
 The calendar reads projected registry metadata once per snapshot and attaches metadata by the lesson's canonical school date. Explicit `School_Day=Closed` values produce calendar cues and editor context. Weekend flags and holiday labels do not infer closure, prevent a save, cancel a lesson or mark attendance. School policy and holiday/term editing currently happen in Grist.
 
-Missing or duplicate registry dates do not hide valid lessons. Snapshot metadata reports aggregate coverage/duplicate warnings; a failed registry read leaves the schedule usable and marks the registry unavailable. The derived `Calendar_Date` reference and registry metadata are excluded from lesson versions, save validation and readback, so a moved lesson's recalculated reference or a changed holiday label does not cause a false save conflict. Server startup never creates registry rows or schema.
+Missing or duplicate registry dates do not hide valid lessons. Snapshot metadata reports aggregate coverage/duplicate warnings; a failed registry read leaves the schedule usable and marks the registry unavailable. The derived `ALL_ATT.DateRegistry` reference and registry metadata are excluded from lesson versions, save validation and readback, so a moved lesson's recalculated reference or a changed holiday label does not cause a false save conflict. Server startup never creates registry rows or schema.
 
 ## Start the connected calendar
 

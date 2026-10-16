@@ -15,7 +15,9 @@ try {
   const client = createGristClient(await readGristConfig({ required: true }));
   const attendanceSchema = await ensureDateRegistrySchema(client);
   const transactionsSchema = args.includes('--include-transactions')
-    ? await ensureDateRegistrySchema(client, { sourceTable: 'Transactions', sourceField: 'datetime' }) : null;
+    ? await ensureDateRegistrySchema(client, {
+      sourceTable: 'Transactions', sourceField: 'datetime', referenceColumn: 'Calendar_Date',
+    }) : null;
   console.log(JSON.stringify({ attendanceSchema, ...(transactionsSchema ? { transactionsSchema } : {}) }));
   if (args.includes('--populate')) {
     console.log(JSON.stringify(await prepareDateRegistry(client, range)));

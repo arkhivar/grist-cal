@@ -62,7 +62,7 @@ export function calendarDateFormula(sourceField = 'start', { sourceKind = 'datet
     'matches = DateRegistry.lookupRecords(Date=day)\nreturn matches[0] if len(matches) == 1 else 0';
 }
 
-export const CALENDAR_DATE_COLUMN = { id: 'Calendar_Date', fields: {
+export const ALL_ATT_DATE_REGISTRY_COLUMN = { id: 'DateRegistry', fields: {
   type: `Ref:${DATE_REGISTRY_TABLE}`, isFormula: true, formula: calendarDateFormula(),
 } };
 
@@ -88,11 +88,15 @@ function assertColumns(existingColumns, expectedColumns, table) {
 
 /** Explicit additive setup. Validate all existing definitions before the first schema write. */
 export async function ensureDateRegistrySchema(client, {
-  sourceTable = 'ALL_ATT', sourceField = 'start', referenceColumn = 'Calendar_Date',
+  sourceTable = 'ALL_ATT', sourceField = 'start',
+  referenceColumn = sourceTable === 'ALL_ATT' ? 'DateRegistry' : 'Calendar_Date',
 } = {}) {
   if (![sourceTable, sourceField, referenceColumn].every(value => typeof value === 'string' && identifier.test(value)) ||
     sourceTable === DATE_REGISTRY_TABLE || sourceField === referenceColumn) {
     throw failure('DATE_REGISTRY_SCHEMA', 'Choose valid source and reference columns for the date registry.');
+  }
+  if (sourceTable === 'ALL_ATT' && referenceColumn === 'Calendar_Date') {
+    throw failure('DATE_REGISTRY_SCHEMA', 'ALL_ATT uses DateRegistry; the retired Calendar_Date column must not be recreated.');
   }
   const tables = await client.request('GET', '/tables');
   const registryExists = tables.tables.some(table => table.id === DATE_REGISTRY_TABLE);
@@ -103,6 +107,11 @@ export async function ensureDateRegistrySchema(client, {
     client.request('GET', `/tables/${sourceTable}/columns`),
     registryExists ? client.request('GET', `/tables/${DATE_REGISTRY_TABLE}/columns`) : { columns: [] },
   ]);
+  if (sourceTable === 'ALL_ATT' && referenceColumn === 'DateRegistry' &&
+    !source.columns.some(column => column.id === referenceColumn) &&
+    source.columns.some(column => column.id === 'Calendar_Date')) {
+    throw failure('DATE_REGISTRY_SCHEMA', 'Rename ALL_ATT.Calendar_Date to DateRegistry before running date registry setup. Existing columns were not modified.');
+  }
   const sourceType = source.columns.find(column => column.id === sourceField)?.fields?.type;
   const sourceKind = sourceType === 'Date' ? 'date' : /^DateTime:[^\s]+$/.test(sourceType || '') ? 'datetime' : null;
   if (!sourceKind) throw failure('DATE_REGISTRY_SCHEMA', 'The selected source must be a Date or a DateTime column with an explicit timezone.');

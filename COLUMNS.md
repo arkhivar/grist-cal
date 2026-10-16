@@ -19,8 +19,8 @@ Existing column definitions and input values are protected unless the user expli
 | `t` | Canonical teacher reference list. Preserve missing/multiple references. Calendar edits may change the teacher. | Accepted. |
 | `student`, `group2` | Classify rows and identify students/groups. Existing references are read-only in the editor; new individual lessons select exactly one student and no group. | Accepted. |
 | `Calendar_Parent` | Ref:ALL_ATT from a group attendance row to its particular group lesson header. Individual attendance belongs to its own row. | Accepted; the day registry does not replace this lesson link. |
-| `Calendar_Date` | Formula Ref:DateRegistry derived from this row's own `start` in Asia/Vladivostok. Empty if the timestamp or unique matching date is missing. | Implemented; Grist recalculates it, the calendar never writes it directly. |
-| `day` | Text lookup formula `$Calendar_Date.Day`, reading the linked registry weekday. | The user replaced the original helper on 2026-10-16; live definition and lookup values verified. |
+| `DateRegistry` (formerly `Calendar_Date`) | Formula Ref:DateRegistry derived from this row's own `start` in Asia/Vladivostok. Empty if the timestamp or unique matching date is missing. | Renamed in place with user authorization on 2026-10-16; Grist recalculates it, the calendar never writes it directly. |
+| `day` | Text lookup formula `$DateRegistry.Day`, reading the linked registry weekday. | The user replaced the original helper on 2026-10-16; the subsequent reference rename updated this formula automatically. Live definition and lookup values verified. |
 | Former `date`, `hasDate` | Legacy date/existence helpers. | Removed by the user; absence verified 2026-10-16. Grist display/summary consequences are recorded below. |
 | `Calendar_UID` | Stored creation/retry identity. The app supplies an ID before creating a row, so retrying a lost response finds that same row. Preparation also uses deterministic IDs. | Accepted shared identifier column; new rows entered directly in Grist may receive a UUID default. See the identity decision below. |
 | `Calendar_Revision` | Formula fingerprint of protected scheduling, reference and calendar fields. Atomic saves compare it to detect concurrent changes, including direct Grist edits. | Implemented; retain this protection. A stable UUID cannot replace a revision. |
@@ -147,18 +147,26 @@ The user created the empty table and authorized its additive setup. It now conta
 | `DateRegistry.School_Day` | Manual Choice: Unspecified, Teaching day, Closed. Blank also means unspecified. No school week or holiday policy was invented. |
 | `DateRegistry.Holiday_Name` | Manual Text; optional holiday label. |
 | `DateRegistry.Academic_Term` | Manual Text; optional term label. |
-| `ALL_ATT.Calendar_Date` | Formula Ref:DateRegistry, derived from that row's own `start` in Asia/Vladivostok. |
+| `ALL_ATT.DateRegistry` | Formula Ref:DateRegistry, derived from that row's own `start` in Asia/Vladivostok. Renamed from Calendar_Date on 2026-10-16. |
 | `Transactions.Calendar_Date` | Formula Ref:DateRegistry, derived from `datetime` in Asia/Vladivostok, matching the existing transaction date helper's source. |
 
 DateTime formulas explicitly convert to the school timezone, then use an indexed exact-date lookup and accept only one match. Missing timestamps, absent registry dates and duplicate dates yield an empty reference. The formula does not create missing dates. A manually entered date outside the prepared range needs explicit registry extension; it does not prevent calendar scheduling.
 
 ### Calendar behavior and relationship rules
 
-Calendar_Date identifies a day; Calendar_Parent identifies a particular lesson. Several lessons can share a day while retaining separate attendance lists. `start`/`end` remain canonical and preserve time-of-day. Moving a group header changes its own derived day, while its children retain their original timestamps, date links and parent links. A report needing the parent's current scheduled day must follow the parent separately. Individual lessons follow their own start edit.
+The DateRegistry reference identifies a day; Calendar_Parent identifies a particular lesson. Several lessons can share a day while retaining separate attendance lists. Stored `start` and Duration_Minutes determine the schedule; derived `end` preserves its time-of-day endpoint. Moving a group header changes its own derived day, while its children retain their original timestamps, date links and parent links. A report needing the parent's current scheduled day must follow the parent separately. Individual lessons follow their own start edit.
 
 The app reads the registry once per snapshot and joins metadata by the lesson's canonical school date. It does not require the derived reference in its save projection. Explicit closed dates receive subtle shading and text cues; holidays and terms appear in date context and the editor. Edit these manual fields in Grist, then use Refresh. Labels are informational: they do not block saves, cancel lessons or mark attendance. A start-day reference describes only the starting date; editor context also covers subsequent days of an overnight lesson, excluding an end exactly at midnight.
 
-Missing, duplicate or unreadable registry metadata never hides a valid lesson. Snapshot metadata reports aggregate coverage/ambiguity; this is not yet a user-facing maintenance dashboard. Date metadata and Calendar_Date are excluded from lesson revisions, so changing a term label does not invalidate an open scheduling draft. Demo behavior is unchanged without registry metadata.
+Missing, duplicate or unreadable registry metadata never hides a valid lesson. Snapshot metadata reports aggregate coverage/ambiguity; this is not yet a user-facing maintenance dashboard. Date metadata and the derived registry reference are excluded from lesson revisions, so changing a term label does not invalidate an open scheduling draft. Demo behavior is unchanged without registry metadata.
+
+### Reference rename — implemented 2026-10-16
+
+The user requested the name DateRegistry to make the source of the reference clear. ALL_ATT.Calendar_Date was renamed in place to ALL_ATT.DateRegistry, changing both the visible label and formula identifier while retaining the same column identity, reference type, lookup formula and display settings. Grist automatically updated the weekday lookup to `$DateRegistry.Day` and its date display helper to `$DateRegistry.Date`. The table is also named DateRegistry: bare `DateRegistry.lookupRecords(...)` searches the table; `$DateRegistry.Day` reads a property of this row's linked date. Transactions.Calendar_Date remains unchanged; this request concerned the ALL_ATT column.
+
+Live readback compared all 3,769 ALL_ATT rows after translating the field name and found zero value changes, including revisions and attendance links. Registry records, view-field settings and the calendar's lesson/attendance/date results were identical. Across all 17 tables, the only definition changes were the requested label/identifier and the two dependent formulas. No columns were added or deleted.
+
+Setup now expects ALL_ATT.DateRegistry, refuses to recreate the retired name, and asks for an explicit rename when only the former reference exists instead of creating a duplicate. The optional Transactions setup retains its existing name. Read-only verification of both live schemas required zero additions. All 225 automated tests, JavaScript syntax checks and 19 vendored-file hashes pass. Historical entries below retain the names used at the time. The previously identified Grist display/summary repairs remain separate work.
 
 ### Cleanup audit before the user's helper deletion — 2026-10-16, read-only
 

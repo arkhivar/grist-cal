@@ -56,7 +56,7 @@ function mockClient({ beforeMutation, afterMutation, response, rejectMutation, f
       row.fields.end = calculateEnd(row.fields);
       // Simulate the independent DateRegistry formula ref; it must never affect CAS.
       const localDay = new Date((row.fields.start + 10 * 3600) * 1000).toISOString().slice(0, 10);
-      row.fields.Calendar_Date = tables.DateRegistry.find(date =>
+      row.fields.DateRegistry = tables.DateRegistry.find(date =>
         typeof date.fields.Date === 'number' && Number.isFinite(date.fields.Date) &&
         new Date(date.fields.Date * 1000).toISOString().slice(0, 10) === localDay)?.id || 0;
       row.fields.Calendar_Revision = invalidRevision ? 'formula-error' : createHash('sha256')
@@ -125,6 +125,7 @@ test('ALL_ATT snapshot projects scheduling sources and date metadata once, never
   assert.ok(!JSON.stringify(snapshot).includes('private_finance'));
   assert.ok(!JSON.stringify(snapshot).includes('private_notes'));
   assert.ok(!ALL_ATT_FIELDS.includes('Calendar_Date'));
+  assert.ok(!ALL_ATT_FIELDS.includes('DateRegistry'));
   assert.deepEqual(snapshot.calendarDates, [
     { id: 'date:101', date: '2026-10-13', day: 'Tuesday', dayParity: 1, monthParity: 1, isWeekend: false,
       schoolDay: 'teaching', holidayName: '', academicTerm: 'Autumn' },
@@ -140,16 +141,17 @@ test('DateRegistry follows the Vladivostok date after a move without entering so
   const client = mockClient();
   const store = createAllAttStore({ client });
   const lesson = await groupLesson(store);
-  assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Date, 101);
+  assert.equal(client.tables.ALL_ATT[0].fields.DateRegistry, 101);
   client.reads.length = 0;
   const saved = await store.saveLesson({ ...lesson,
-    start: '2026-10-13T14:30:00Z', end: '2026-10-13T15:30:00Z', calendarDateId: 'date:999', Calendar_Date: 999 },
+    start: '2026-10-13T14:30:00Z', end: '2026-10-13T15:30:00Z', calendarDateId: 'date:999', DateRegistry: 999 },
   { expectedVersion: lesson.version, mutationId: MUTATION });
   assert.equal(saved.start, '2026-10-13T14:30:00.000Z');
-  assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Date, 102, 'Derived ref recomputes without changing the save contract');
-  assert.equal(client.tables.ALL_ATT[1].fields.Calendar_Date, 101, 'Moving a group does not move its attendance children');
+  assert.equal(client.tables.ALL_ATT[0].fields.DateRegistry, 102, 'Derived ref recomputes without changing the save contract');
+  assert.equal(client.tables.ALL_ATT[1].fields.DateRegistry, 101, 'Moving a group does not move its attendance children');
   assert.equal(client.reads.filter(read => read.table === 'DateRegistry').length, 0);
-  assert.ok(client.reads.filter(read => read.table === 'ALL_ATT').every(read => !read.fields.includes('Calendar_Date')));
+  assert.ok(client.reads.filter(read => read.table === 'ALL_ATT').every(read =>
+    !read.fields.includes('DateRegistry') && !read.fields.includes('Calendar_Date')));
   assert.deepEqual(client.writes[0].body.records[0].fields, {
     Calendar_Mutation: MUTATION, start: Date.parse('2026-10-13T14:30:00Z') / 1000,
   });
@@ -171,7 +173,7 @@ test('DateRegistry metadata and derived reference changes do not invalidate an o
   const current = refreshed.lessons.find(item => item.id === lesson.id);
   assert.equal(current.calendarDateId, 'date:201');
   assert.equal(current.version, lesson.version);
-  assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Date, 201);
+  assert.equal(client.tables.ALL_ATT[0].fields.DateRegistry, 201);
   assert.equal(refreshed.calendarDates[0].holidayName, 'New fictional holiday');
   client.reads.length = 0;
   const saved = await store.saveLesson({ ...lesson, room: 'New room' },

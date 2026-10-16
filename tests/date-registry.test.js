@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DATE_REGISTRY_TABLE, DATE_REGISTRY_FIELDS, DATE_REGISTRY_COLUMNS, CALENDAR_DATE_COLUMN,
+  DATE_REGISTRY_TABLE, DATE_REGISTRY_FIELDS, DATE_REGISTRY_COLUMNS, ALL_ATT_DATE_REGISTRY_COLUMN,
   calendarDateFormula, ensureDateRegistrySchema, inspectDateRegistry, normalizeDateRegistry,
   buildDateRegistryPlan, prepareDateRegistry,
 } from '../server/date-registry.mjs';
@@ -80,9 +80,11 @@ test('registry schema derives deterministic metadata while school policy remains
   assert.doesNotMatch(JSON.stringify(fields), /ALL_ATT|Transactions|lookupRecords|\.id/);
 });
 
-test('Calendar_Date converts each own timestamp explicitly and refuses absent or duplicate date matches', () => {
+test('the ALL_ATT DateRegistry reference converts its own timestamp and refuses absent or duplicate date matches', () => {
   const formula = calendarDateFormula();
-  assert.equal(CALENDAR_DATE_COLUMN.fields.formula, formula);
+  assert.equal(ALL_ATT_DATE_REGISTRY_COLUMN.id, 'DateRegistry');
+  assert.equal(ALL_ATT_DATE_REGISTRY_COLUMN.fields.type, 'Ref:DateRegistry');
+  assert.equal(ALL_ATT_DATE_REGISTRY_COLUMN.fields.formula, formula);
   assert.match(formula, /value = \$start/);
   assert.match(formula, /value\.astimezone\(moment\.tzinfo\("Asia\/Vladivostok"\)\)\.date\(\)/);
   assert.match(formula, /value\.tzinfo is None/);
@@ -104,7 +106,8 @@ test('schema setup adds missing registry and source columns while preserving def
   assert.equal(writes[0].path, '/tables/DateRegistry/columns');
   assert.deepEqual(writes[0].body.columns, DATE_REGISTRY_COLUMNS);
   assert.ok(writes.every(call => call.body.columns.every(column => !['A', 'B', 'C'].includes(column.id))));
-  assert.deepEqual(writes[1].body.columns, [CALENDAR_DATE_COLUMN]);
+  assert.deepEqual(writes[1].body.columns, [ALL_ATT_DATE_REGISTRY_COLUMN]);
+  assert.equal(result.referenceColumn, 'DateRegistry');
   assert.equal(result.addedRegistryColumnCount, 8);
   assert.equal(result.addedSourceColumnCount, 1);
 });
@@ -116,13 +119,39 @@ test('schema setup is idempotent and supports separate Transactions or Date sour
     { id: 'Calendar_Date', fields: { type: 'Ref:DateRegistry', isFormula: true, formula: calendarDateFormula('datetime') } },
   ], sourceTable: 'Transactions' });
   const result = await ensureDateRegistrySchema(client, { sourceTable: 'Transactions', sourceField: 'datetime' });
+  assert.equal(result.referenceColumn, 'Calendar_Date');
   assert.equal(result.addedRegistryColumnCount, 0);
   assert.equal(result.addedSourceColumnCount, 0);
   assert.equal(client.calls.filter(call => call.method !== 'GET').length, 0);
   const dateClient = schemaClient({ registry: clone(DATE_REGISTRY_COLUMNS), sourceTable: 'Transactions',
     source: [{ id: 'date', fields: { type: 'Date', isFormula: true, formula: '$datetime.date()' } }] });
   await ensureDateRegistrySchema(dateClient, { sourceTable: 'Transactions', sourceField: 'date' });
+  assert.equal(dateClient.calls.at(-1).body.columns[0].id, 'Calendar_Date');
   assert.equal(dateClient.calls.at(-1).body.columns[0].fields.formula, calendarDateFormula('date', { sourceKind: 'date' }));
+});
+
+test('renamed ALL_ATT reference is idempotent and setup never recreates Calendar_Date', async () => {
+  const source = [{ id: 'start', fields: { type: 'DateTime:Asia/Vladivostok', isFormula: false } },
+    clone(ALL_ATT_DATE_REGISTRY_COLUMN)];
+  const client = schemaClient({ registry: clone(DATE_REGISTRY_COLUMNS), source });
+  const result = await ensureDateRegistrySchema(client);
+  assert.equal(result.referenceColumn, 'DateRegistry');
+  assert.equal(result.addedRegistryColumnCount, 0);
+  assert.equal(result.addedSourceColumnCount, 0);
+  assert.ok(client.calls.every(call => call.method === 'GET'));
+  const before = clone(client.calls);
+  await assert.rejects(ensureDateRegistrySchema(client, { referenceColumn: 'Calendar_Date' }),
+    { code: 'DATE_REGISTRY_SCHEMA' });
+  assert.deepEqual(client.calls, before, 'Explicit requests cannot restore the retired ALL_ATT column');
+});
+
+test('old-only ALL_ATT reference requires a rename before any additive setup writes', async () => {
+  const source = [{ id: 'start', fields: { type: 'DateTime:Asia/Vladivostok', isFormula: false } },
+    { ...clone(ALL_ATT_DATE_REGISTRY_COLUMN), id: 'Calendar_Date' }];
+  const client = schemaClient({ source });
+  await assert.rejects(ensureDateRegistrySchema(client), error =>
+    error.code === 'DATE_REGISTRY_SCHEMA' && /Rename ALL_ATT.Calendar_Date to DateRegistry/.test(error.message));
+  assert.ok(client.calls.every(call => call.method === 'GET'), 'Setup must not add duplicate links or partially change the registry');
 });
 
 test('schema validates all incompatible definitions before any write', async () => {
@@ -132,7 +161,7 @@ test('schema validates all incompatible definitions before any write', async () 
     { registry: [{ id: 'School_Day', fields: { type: 'Choice', isFormula: false, widgetOptions: '{}' } }] },
     { source: [{ id: 'start', fields: { type: 'Text', isFormula: false } }] },
     { source: [{ id: 'start', fields: { type: 'DateTime:Asia/Vladivostok', isFormula: false } },
-      { id: 'Calendar_Date', fields: { type: 'Ref:DateRegistry', isFormula: true, formula: 'old formula' } }] },
+      { id: 'DateRegistry', fields: { type: 'Ref:DateRegistry', isFormula: true, formula: 'old formula' } }] },
   ];
   for (const variant of variants) {
     const client = schemaClient(variant);
