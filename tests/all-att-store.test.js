@@ -5,6 +5,7 @@ import { createAllAttStore } from '../server/all-att-store.mjs';
 import { ALL_ATT_FIELDS, PERFORMANCE_FIELDS, lessonVersion } from '../server/all-att-model.mjs';
 import { DATE_REGISTRY_FIELDS } from '../server/date-registry.mjs';
 import { encodeLessonTitle } from '../src/lesson-title.js';
+import { createLessonIdentityController } from '../src/lesson-identity.js';
 
 const UID = '12345678-1234-4123-8123-123456789abc';
 const NEW_UID = '22345678-1234-4123-8123-123456789abc';
@@ -485,6 +486,43 @@ test('ALL_ATT creates one row for an individual booking with pending attendance 
   assert.equal(client.tables.ALL_ATT[3].fields.wage, undefined);
   assert.equal(client.tables.ALL_ATT[3].fields.datetime, undefined);
   assert.ok(!(await store.getSnapshot()).attendance.some(row => row.lessonId === saved.id));
+});
+
+test('combined subject choices save only their final identity and retry without adding attendance or duplicate rows', async () => {
+  for (const [first, last, kind, studentRefs, groupRefs] of [
+    ['folks:31', 'per:40', 'group', ['L'], ['L', 40]],
+    ['per:40', 'folks:31', 'individual', ['L', 31], ['L']],
+  ]) {
+    const client = mockClient();
+    const store = createAllAttStore({ client });
+    const snapshot = await store.getSnapshot();
+    const before = clone(client.tables.ALL_ATT);
+    const identity = createLessonIdentityController({ students: snapshot.students, groups: snapshot.groups });
+    identity.select(first);
+    identity.select(last);
+    assert.equal(client.writes.length, 0, 'Changing the subject chip must only change the unsaved draft');
+    const draft = { ...freshDraft(), title: '', ...identity.submissionFields() };
+    const saved = await store.saveLesson(draft, { mutationId: MUTATION });
+    assert.equal(saved.lessonKind, kind);
+    assert.deepEqual(saved.studentIds, identity.submissionFields().studentIds);
+    assert.deepEqual(saved.groupIds, identity.submissionFields().groupIds);
+    const fields = client.tables.ALL_ATT.at(-1).fields;
+    assert.deepEqual(fields.student, studentRefs);
+    assert.deepEqual(fields.group2, groupRefs);
+    assert.deepEqual(fields.t, ['L', 17]);
+    assert.equal(fields.Calendar_Attendance, 'pending');
+    assert.equal(fields.Calendar_Parent, 0);
+    assert.equal(fields.Calendar_UID, NEW_UID);
+    const retried = await store.saveLesson({ ...draft, ...identity.submissionFields() }, { mutationId: MUTATION });
+    assert.equal(retried.id, saved.id);
+    assert.equal(retried.version, saved.version);
+    assert.equal(client.writes.length, 1);
+    assert.equal(client.tables.ALL_ATT.length, before.length + 1);
+    assert.deepEqual(client.tables.ALL_ATT.slice(0, before.length), before);
+    const after = await store.getSnapshot();
+    assert.deepEqual(after.attendance, snapshot.attendance);
+    assert.equal(after.lessons.filter(lesson => lesson.id === saved.id).length, 1);
+  }
 });
 
 test('ALL_ATT duplicating a group copies scheduling references and checklist, never its attendance children', async () => {

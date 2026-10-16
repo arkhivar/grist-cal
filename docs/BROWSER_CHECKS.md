@@ -154,3 +154,17 @@ Expected browser checks, not observations:
 - Save, reopen and duplicate a lesson with both additions. A duplicate with another student/group keeps the text but updates the name. Attendance stays with the source.
 - Refresh after a reference rename and retry a failed save without losing custom text. An untouched existing title should not create a dirty draft or a title write.
 - Check 390px layout, long names and historical multiple references. Capsules wrap without editing or clipping their text; the two input fields remain usable. The combined custom-text limit is 160 characters, excluding names.
+
+## Searchable title chips — 2026-10-16
+
+The live title chips now replace the separate teacher, lesson type, student and group-reference selectors. Interactive browser verification remains pending under the existing URL restriction. All 309 automated tests pass, including a small DOM/event harness for picker behavior and isolated store tests for inferred individual/group creation and retry. Read-only HTTP checks verified the updated assets and catalog (1,383 students, 13 groups, 17 eligible teachers); the identity controller's names matched all 2,820 saved lessons. No live writes were used for this UI update.
+
+Expected browser checks, not observations:
+
+- Open a new lesson and click either chip, or use Enter/Space/ArrowDown from the focused chip. Search by name, navigate with arrows, and select with Enter. Student/group options have distinct type labels even when their names match.
+- Choose a student, then a group, then another student. The chip and saved lesson classification should follow the final choice with no leftover references or extra attendance. Group not assigned remains available. Added title text stays intact.
+- Escape closes the picker before closing the editor. Tab moves to the next title control; Shift+Tab moves back. Clicking another chip switches pickers. Typing in search or pressing Enter on an empty result must not submit the lesson form.
+- Saved lessons allow teacher selection but keep the subject chip locked. Historical teacher/reference values remain readable. Duplicate opens an editable subject choice and requires an eligible teacher where the original assignment cannot be reused.
+- Refresh, failed saves and unchanged uncertain retries retain the selected IDs and editable title parts. A catalog rename changes the chip text; removal of a new-choice entry does not silently replace the draft selection.
+- Check desktop, 390px, short-window and touch layouts. The popup stays within the scrollable editor on narrow/short windows, options can be scrolled, long names wrap, focus is visible and the selected option is revealed when reopening. Confirm native combobox/screen-reader announcements separately.
+- Demo mode retains its original title and teacher fields, simulated failure and Reset controls.

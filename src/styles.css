@@ -283,15 +283,33 @@ dialog::backdrop { background: rgb(24 24 27 / .24); }
 .form-field input::placeholder, .form-field textarea::placeholder { color: #9999a1; opacity: 1; }
 .form-field textarea { resize: vertical; min-height: 60px; max-height: 180px; }
 .title-field input { min-height: 42px; padding: 8px 10px; font-size: 17px; font-weight: 500; }
-.live-title-field { margin: 0; padding: 0; border: 0; }
+.live-title-field { position: relative; margin: 0; padding: 0; border: 0; }
 .live-title-field legend { margin-bottom: 6px; padding: 0; color: #52525b; font-size: 11px; font-weight: 500; }
 .title-composer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; padding: 7px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); }
 .title-composer:focus-within { border-color: var(--accent); }
 .title-composer input { flex: 0 1 auto; width: 11ch; max-width: 100%; min-width: 8ch; min-height: 32px; padding: 4px; border-color: transparent; font-size: 14px; font-weight: 400; }
 .title-composer input:last-child { flex: 1 1 11ch; }
 .title-names { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; max-width: 100%; }
-.title-capsule { max-width: 100%; padding: 5px 10px; border: 1px solid var(--border); border-radius: 18px; background: #f2f2f0; color: #44444b; font-size: 14px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+.title-capsule { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; max-width: 100%; padding: 5px 10px; border: 1px solid var(--border); border-radius: 18px; background: #f2f2f0; color: #44444b; font-size: 14px; font-weight: 500; line-height: 1.4; text-align: left; overflow-wrap: anywhere; }
+.title-capsule > span { min-width: 0; }
+.title-capsule:hover:not(:disabled), .title-capsule[aria-expanded="true"] { border-color: #a9a9a5; background: #e9e9e7; }
+.title-capsule .chip-chevron { width: 13px; height: 13px; }
+.title-capsule[data-locked="true"] { opacity: 1; }
+.title-capsule[data-locked="true"] .chip-chevron { display: none; }
 .teacher-capsule { border-color: #dce6f7; background: var(--accent-soft); color: #315a98; }
+.teacher-capsule:hover:not(:disabled), .teacher-capsule[aria-expanded="true"] { border-color: #b3c8ec; background: #e3edfe; }
+.chip-picker { position: absolute; top: calc(100% + 6px); left: 0; right: 0; z-index: 5; padding: 7px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 24px #18181b21; }
+.chip-picker-search { display: flex; align-items: center; gap: 5px; padding-left: 7px; margin-bottom: 5px; }
+.chip-picker-search > .icon { width: 16px; height: 16px; color: var(--muted); }
+.chip-picker-search input { flex: 1; min-height: 36px; padding: 7px; font-size: 13px; font-weight: 400; }
+.chip-picker-options { max-height: min(230px, 30vh); max-height: min(230px, 30dvh); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.chip-picker-option { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; padding: 8px 10px; border-radius: 4px; cursor: pointer; }
+.chip-picker-option:hover, .chip-picker-option.is-active { background: var(--accent-soft); }
+.chip-picker-option[aria-selected="true"] .chip-picker-option-name { color: #2357a3; font-weight: 600; }
+.chip-picker-option-name { min-width: 0; font-size: 13px; overflow-wrap: anywhere; }
+.chip-picker-option-detail { flex: 0 0 auto; max-width: 45%; color: var(--muted); font-size: 10px; text-align: right; }
+.chip-picker-empty { margin: 0; padding: 16px 10px; color: var(--muted); font-size: 12px; }
+.chip-picker-status { margin: 5px 3px 0; padding-top: 6px; border-top: 1px solid var(--border); color: var(--muted); font-size: 10px; }
 .form-row { display: flex; align-items: flex-start; gap: 15px; }
 .time-fields { min-width: 0; margin: 0; padding: 14px 12px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: #fafaf9; }
 .time-fields legend { display: flex; align-items: center; gap: 6px; padding: 0 4px; color: #62626a; font-size: 10px; }
@@ -440,6 +458,10 @@ kbd { display: inline-grid; min-width: 25px; min-height: 24px; place-items: cent
   .toast, .sidebar-collapsed .toast { left: 50%; bottom: 43px; }
 }
 
+@media (max-width: 760px), (max-height: 560px) {
+  .chip-picker { position: static; margin-top: 6px; }
+}
+
 @media (max-width: 460px) {
   .app-header { gap: 6px; padding-inline: 10px; }
   .brand { gap: 7px; }
@@ -481,6 +503,7 @@ kbd { display: inline-grid; min-width: 25px; min-height: 24px; place-items: cent
 }
 
 @media (hover: none), (pointer: coarse), (max-width: 760px) {
+  .title-capsule, .chip-picker-option { min-height: 44px; }
   .hours-toggle, .hours-notice .text-button { min-height: 44px; }
   .teacher-options { opacity: 1; width: 40px; height: 44px; }
   .teacher-filter label { min-height: 44px; }

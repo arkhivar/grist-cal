@@ -6,6 +6,8 @@ import { createDurationController } from './duration.js';
 import { getTeacherChoices } from './teacher-choices.js';
 import { BUSINESS_START, BUSINESS_END, getHourVisibility } from './calendar-hours.js';
 import { createLessonTitleController, TITLE_TEXT_LIMIT } from './lesson-title.js';
+import { createLessonIdentityController } from './lesson-identity.js';
+import { createChipPicker } from './chip-picker.js';
 
 const $ = (id) => document.getElementById(id);
 const escape = (value = '') => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -42,6 +44,8 @@ async function start() {
   $('lesson-title').required = !isLive;
   $('demo-title-field').hidden = isLive;
   $('live-title-field').hidden = !isLive;
+  $('demo-teacher-field').hidden = isLive;
+  $('lesson-teacher').required = !isLive;
   const sourceLabel = isLive ? (config.label || 'Grist sandbox') : 'Sample school';
   const readyText = isLive ? 'Connected to Grist' : 'Demo ready';
   document.body.dataset.mode = config.mode;
@@ -85,6 +89,8 @@ async function start() {
   let editor = null;
   let durationController = null;
   let titleController = null;
+  let identityController = null;
+  let selectedLessonTeacherId = '';
   let editorSaving = false;
   let refreshing = false;
   let toastTimer;
@@ -93,6 +99,8 @@ async function start() {
   let lessonMenu = null;
   let teacherMenu = null;
   const mobile = window.matchMedia('(max-width: 760px)');
+  const titlePicker = createChipPicker({ panel: $('lesson-picker'), search: $('lesson-picker-search'),
+    list: $('lesson-picker-options'), empty: $('lesson-picker-empty'), status: $('lesson-picker-status') });
 
   function notify(message, kind = 'success') {
     clearTimeout(toastTimer);
@@ -104,6 +112,7 @@ async function start() {
 
   function setBusy(value) {
     busy = value;
+    if (value) titlePicker.close();
     if (value) delete $('save-state').dataset.state;
     $('save-state-text').textContent = value ? 'Saving…' : readyText;
     $('save-state').classList.toggle('is-saving', value);
@@ -116,7 +125,7 @@ async function start() {
     $('lesson-actions').disabled = value || refreshing;
     // Freeze form inputs during submission so a late keystroke cannot be silently lost.
     for (const input of $('lesson-form').querySelectorAll('input,select,textarea')) input.disabled = value;
-    if (isLive && editor) syncLessonIdentity();
+    if (isLive && editor) syncTitleChips();
   }
 
   function armFailure() {
@@ -297,46 +306,27 @@ async function start() {
     if (isLive) {
       // Only deliberate title edits become stored overrides; reference names stay automatic.
       delete draft.title;
-      Object.assign(draft, titleController?.submissionFields());
-      draft.lessonKind = $('lesson-kind').value;
-      draft.studentIds = draft.lessonKind === 'individual' ? JSON.parse($('lesson-student').value || '[]') : [];
-      draft.groupIds = draft.lessonKind === 'group' ? JSON.parse($('lesson-group-ref').value || '[]') : [];
+      draft.teacherId = selectedLessonTeacherId;
+      Object.assign(draft, titleController?.submissionFields(), identityController?.submissionFields());
     }
     return draft;
   }
 
-  function referenceChoices(id, choices, selectedIds, placeholder) {
-    const select = $(id);
-    const selected = [...(selectedIds || [])].sort();
-    const options = [{ ids: [], name: placeholder }, ...choices.map(item => ({ ids: [item.id], name: item.name }))];
-    // Preserve existing combinations and missing references without silently substituting a person/group.
-    if (selected.length && !options.some(option => JSON.stringify(option.ids) === JSON.stringify(selected))) {
-      options.push({ ids: selected, name: selected.map(ref => choices.find(item => item.id === ref)?.name || ref).join(' + ') });
-    }
-    select.innerHTML = options.map(option => `<option value="${escape(JSON.stringify(option.ids))}">${escape(option.name)}</option>`).join('');
-    select.value = JSON.stringify(selected);
-  }
-
-  function syncLessonIdentity() {
-    if (!isLive) return;
-    const individual = $('lesson-kind').value === 'individual';
-    $('lesson-student-field').hidden = !individual;
-    $('lesson-group-ref-field').hidden = individual;
-    for (const id of ['lesson-kind', 'lesson-student', 'lesson-group-ref']) $(id).disabled = busy || Boolean(editor?.id);
-    $('lesson-identity-hint').textContent = editor?.id
-      ? 'The lesson type and student/group links are kept when editing. Scheduling changes do not mark attendance.'
-      : individual ? 'Choose one student. Booking this lesson does not record attendance.' : 'Choose a group, or leave it unassigned. Attendance can be linked later.';
+  function syncTitleChips() {
+    if (!isLive || !identityController) return;
+    const { locked } = identityController.getState();
+    $('lesson-teacher-chip').disabled = busy || refreshing;
+    $('lesson-subject-chip').disabled = busy || refreshing || locked;
+    $('lesson-subject-chip').dataset.locked = String(locked);
+    $('lesson-title-hint').textContent = locked
+      ? 'Choose a teacher using its chip. Student/group links are fixed for saved lessons. Add your own text on either side.'
+      : 'Choose a teacher and a student or group. The lesson type follows your choice. Add your own text on either side.';
     updateAutomaticTitle();
   }
 
   function automaticEditorTitle() {
-    const individual = $('lesson-kind').value === 'individual';
-    const ids = JSON.parse($(individual ? 'lesson-student' : 'lesson-group-ref').value || '[]')
-      .sort((left, right) => Number(left.split(':')[1]) - Number(right.split(':')[1]));
-    const choices = (individual ? snapshot.students : snapshot.groups) || [];
-    const referenceTitle = ids.map(id => choices.find(item => item.id === id)?.name || `${individual ? 'Student' : 'Group'} #${id.split(':')[1]}`)
-      .join(individual ? ', ' : ' · ') || (individual ? 'Student not assigned' : 'Group not assigned');
-    const teacherTitle = snapshot.teachers.find(teacher => teacher.id === $('lesson-teacher').value)?.name || 'Teacher not assigned';
+    const referenceTitle = identityController.getState().referenceTitle;
+    const teacherTitle = snapshot.teachers.find(teacher => teacher.id === selectedLessonTeacherId)?.name || 'Choose teacher';
     return { referenceTitle, teacherTitle, automaticTitle: `${teacherTitle} · ${referenceTitle}` };
   }
 
@@ -346,6 +336,8 @@ async function start() {
     const names = automaticEditorTitle();
     $('lesson-title-teacher').textContent = names.teacherTitle;
     $('lesson-title-name').textContent = names.referenceTitle;
+    $('lesson-teacher-chip').setAttribute('aria-label', `Teacher: ${names.teacherTitle}. Choose a teacher.`);
+    $('lesson-subject-chip').setAttribute('aria-label', `${identityController.getState().lessonKind === 'individual' ? 'Student' : 'Group'}: ${names.referenceTitle}.${identityController.getState().locked ? ' Fixed for this saved lesson.' : ' Choose a student or group.'}`);
     for (const side of ['before', 'after']) {
       const input = $(`lesson-title-${side}`);
       if (input.value !== state[side]) input.value = state[side];
@@ -360,6 +352,39 @@ async function start() {
     if (!isLive || !titleController) return;
     titleController.updateAutomatic(automaticEditorTitle().automaticTitle);
     renderTitle();
+  }
+
+  function editorTeacherChoices(query = '') {
+    const { choices } = getTeacherChoices(snapshot.teachers, {
+      mode: editor?.id ? 'edit' : 'create', teacherId: editor?.originalTeacherId,
+    });
+    const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    return choices.filter(teacher => terms.every(term => teacher.name.toLocaleLowerCase().includes(term)))
+      .map(teacher => ({ key: teacher.id, name: teacher.name, kind: 'teacher',
+        detail: teacher.selectable === false ? 'Current assignment' : '' }));
+  }
+
+  function openTitlePicker(kind) {
+    if (!isLive || !editor || busy || refreshing || (kind === 'subject' && identityController.getState().locked)) return;
+    const teacher = kind === 'teacher';
+    $('lesson-picker-search').placeholder = teacher ? 'Search teachers…' : 'Search students or groups…';
+    titlePicker.open({ trigger: $(teacher ? 'lesson-teacher-chip' : 'lesson-subject-chip'),
+      label: teacher ? 'teachers' : 'students or groups',
+      getChoices: teacher ? editorTeacherChoices : query => identityController.getChoices(query),
+      getSelectedKey: () => teacher ? selectedLessonTeacherId : identityController.getState().selectionKey,
+      onSelect(choice) {
+        if (busy || refreshing || !editor) return false;
+        if (teacher) selectedLessonTeacherId = choice.key;
+        else identityController.select(choice.key);
+        updateAutomaticTitle();
+      },
+      onTab({ backwards }) {
+        const next = teacher ? (backwards ? 'lesson-title-before'
+          : identityController.getState().locked ? 'lesson-title-after' : 'lesson-subject-chip')
+          : backwards ? 'lesson-teacher-chip' : 'lesson-title-after';
+        $(next).focus();
+      },
+    });
   }
 
   function isDirty() { return editor && JSON.stringify(rawDraft()) !== editor.initial; }
@@ -399,10 +424,12 @@ async function start() {
 
   function closeEditor() {
     closeLessonMenu();
+    titlePicker.close();
     $('lesson-dialog').close();
     editor = null;
     durationController = null;
     titleController = null;
+    identityController = null;
     if (editorOpener?.isConnected && !editorOpener.closest('[inert]') && editorOpener.getClientRects().length) editorOpener.focus({ preventScroll: true });
     else $('sidebar-toggle').focus({ preventScroll: true });
   }
@@ -451,18 +478,15 @@ async function start() {
     $('editor-eyebrow').textContent = duplicate ? 'NEW COPY' : existing ? 'SCHOOL CALENDAR' : 'NEW LESSON';
     $('lesson-actions').hidden = !existing;
     $('editor-version').textContent = isLive ? 'Saves to Grist' : existing ? 'Changes stay in this demo' : 'One lesson · one calendar event';
-    $('lesson-teacher').innerHTML = `${teacherChoices.teacherId ? '' : `<option value="" disabled>${teacherChoices.choices.length ? 'Choose a teacher' : 'No teachers available'}</option>`}${teacherChoices.choices.map(t => `<option value="${escape(t.id)}">${escape(t.name)}</option>`).join('')}`;
-    $('lesson-identity-fields').hidden = !isLive;
+    if (!isLive) $('lesson-teacher').innerHTML = `${teacherChoices.teacherId ? '' : `<option value="" disabled>${teacherChoices.choices.length ? 'Choose a teacher' : 'No teachers available'}</option>`}${teacherChoices.choices.map(t => `<option value="${escape(t.id)}">${escape(t.name)}</option>`).join('')}`;
     document.querySelector('label[for="lesson-group"]').textContent = isLive ? 'Group label (optional)' : 'Group';
-    if (isLive) {
-      $('lesson-kind').value = lesson.lessonKind || 'group';
-      referenceChoices('lesson-student', snapshot.students || [], lesson.studentIds, 'Choose a student');
-      referenceChoices('lesson-group-ref', snapshot.groups || [], lesson.groupIds, 'Group not assigned');
-    }
+    identityController = isLive ? createLessonIdentityController({ lesson, existing: Boolean(existing),
+      students: snapshot.students || [], groups: snapshot.groups || [] }) : null;
     for (const input of $('lesson-form').querySelectorAll('[name]')) {
       input.value = ['start', 'end'].includes(input.name) ? preciseSchoolInput(lesson[input.name]) : lesson[input.name] || '';
     }
     $('lesson-teacher').value = teacherChoices.teacherId;
+    selectedLessonTeacherId = teacherChoices.teacherId;
     titleController = isLive ? createLessonTitleController({ ...automaticEditorTitle(),
       titleOverride: lesson.titleOverride || '', existing: Boolean(existing) }) : null;
     renderTitle();
@@ -475,12 +499,13 @@ async function start() {
       $('draft-notice').hidden = false;
     }
     renderAttendance(existing?.id);
-    editor = { id: existing?.id, clientId: crypto.randomUUID(), version: existing?.version, initial: JSON.stringify(rawDraft()) };
+    editor = { id: existing?.id, clientId: crypto.randomUUID(), version: existing?.version,
+      originalTeacherId: existing?.teacherId, initial: JSON.stringify(rawDraft()) };
     renderEditorDateContext();
-    syncLessonIdentity();
+    syncTitleChips();
     closeMobileSidebar();
     $('lesson-dialog').showModal();
-    $(isLive ? 'lesson-title-after' : 'lesson-title').focus();
+    $(isLive ? existing ? 'lesson-title-after' : selectedLessonTeacherId ? 'lesson-subject-chip' : 'lesson-teacher-chip' : 'lesson-title').focus();
   }
 
   function restoreMenuFocus(target) {
@@ -625,6 +650,12 @@ async function start() {
     if (!editor || busy || refreshing) return;
     let submitted;
     try {
+      // Let the server check eligibility: an uncertain save must remain retryable
+      // unchanged even if the selected teacher leaves the team after it commits.
+      if (isLive && !selectedLessonTeacherId) {
+        $('lesson-teacher-chip').focus();
+        throw new Error('Choose a teacher using the title chip.');
+      }
       const raw = rawDraft();
       submitted = { ...raw, type: 'lesson', ...(editor.id ? { id: editor.id } : isLive ? { clientId: editor.clientId } : {}), start: fromSchoolInput(raw.start), end: fromSchoolInput(raw.end) };
       if (!$('lesson-form').reportValidity()) return;
@@ -794,7 +825,9 @@ async function start() {
 
   function acceptSnapshot(next) {
     snapshot = next;
+    identityController?.updateCatalogs({ students: snapshot.students || [], groups: snapshot.groups || [] });
     updateAutomaticTitle();
+    titlePicker.refresh();
     const nextDateVersion = JSON.stringify(snapshot.calendarDates || []);
     if (nextDateVersion !== dateContextVersion) {
       dateContextVersion = nextDateVersion;
@@ -898,10 +931,15 @@ async function start() {
   $('sidebar-backdrop').addEventListener('click', closeMobileSidebar);
   mobile.addEventListener('change', syncSidebar);
   $('lesson-form').addEventListener('submit', saveEditor);
-  $('lesson-kind').addEventListener('change', syncLessonIdentity);
-  $('lesson-student').addEventListener('change', updateAutomaticTitle);
-  $('lesson-group-ref').addEventListener('change', updateAutomaticTitle);
-  $('lesson-teacher').addEventListener('change', updateAutomaticTitle);
+  for (const kind of ['teacher', 'subject']) {
+    $(`lesson-${kind}-chip`).addEventListener('click', () => openTitlePicker(kind));
+    $(`lesson-${kind}-chip`).addEventListener('keydown', event => {
+      if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
+        event.preventDefault();
+        openTitlePicker(kind);
+      }
+    });
+  }
   for (const side of ['before', 'after']) {
     $(`lesson-title-${side}`).addEventListener('input', event => {
       titleController?.changeAffix(side, event.target.value);
@@ -913,11 +951,17 @@ async function start() {
   $('lesson-duration').addEventListener('change', changeLessonDuration);
   $('close-editor').addEventListener('click', requestCloseEditor);
   $('cancel-editor').addEventListener('click', requestCloseEditor);
-  $('lesson-dialog').addEventListener('cancel', event => { event.preventDefault(); void requestCloseEditor(); });
+  $('lesson-dialog').addEventListener('cancel', event => {
+    event.preventDefault();
+    if (titlePicker.isOpen()) titlePicker.close(true);
+    else void requestCloseEditor();
+  });
   async function refreshData() {
     if (busy || refreshing) return;
     closeLessonMenu(true);
+    titlePicker.close();
     refreshing = true;
+    syncTitleChips();
     $('refresh-button').disabled = true;
     $('refresh-editor').disabled = true;
     $('save-lesson').disabled = true;
@@ -947,6 +991,7 @@ async function start() {
       notify(error.message, 'error');
     } finally {
       refreshing = false;
+      syncTitleChips();
       $('refresh-button').disabled = busy;
       $('refresh-editor').disabled = busy;
       $('save-lesson').disabled = busy;

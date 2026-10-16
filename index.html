@@ -91,22 +91,20 @@
           <div class="title-composer">
             <input id="lesson-title-before" aria-label="Title text before names" aria-describedby="lesson-title-hint" placeholder="Add before…" maxlength="160" autocomplete="off">
             <span class="title-names">
-              <span class="title-capsule teacher-capsule"><span class="sr-only">Teacher: </span><span id="lesson-title-teacher"></span></span>
-              <span class="title-capsule"><span class="sr-only">Student or group: </span><span id="lesson-title-name"></span></span>
+              <button id="lesson-teacher-chip" type="button" class="title-capsule teacher-capsule" aria-label="Choose a teacher" aria-haspopup="listbox" aria-expanded="false" aria-controls="lesson-picker-options" aria-describedby="lesson-title-hint"><span id="lesson-title-teacher"></span><svg class="icon chip-chevron" aria-hidden="true"><use href="#i-chevron"/></svg></button>
+              <button id="lesson-subject-chip" type="button" class="title-capsule" aria-label="Choose a student or group" aria-haspopup="listbox" aria-expanded="false" aria-controls="lesson-picker-options" aria-describedby="lesson-title-hint"><span id="lesson-title-name"></span><svg class="icon chip-chevron" aria-hidden="true"><use href="#i-chevron"/></svg></button>
             </span>
             <input id="lesson-title-after" aria-label="Title text after names" aria-describedby="lesson-title-hint" placeholder="Add after…" maxlength="160" autocomplete="off">
           </div>
-          <p id="lesson-title-hint" class="field-hint">Names are linked to the selections below. Add your own text before or after them.</p>
-        </fieldset>
-        <div id="lesson-identity-fields" hidden>
-          <div class="form-row">
-            <div class="form-field"><label for="lesson-kind">Lesson type</label><select id="lesson-kind"><option value="group">Group lesson</option><option value="individual">Individual lesson</option></select></div>
-            <div id="lesson-student-field" class="form-field" hidden><label for="lesson-student">Student</label><select id="lesson-student"></select></div>
-            <div id="lesson-group-ref-field" class="form-field"><label for="lesson-group-ref">Group</label><select id="lesson-group-ref"></select></div>
+          <p id="lesson-title-hint" class="field-hint">Choose a teacher and a student or group. Add your own text on either side.</p>
+          <div id="lesson-picker" class="chip-picker" hidden>
+            <div class="chip-picker-search"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="lesson-picker-search" type="search" role="combobox" aria-label="Search choices" aria-autocomplete="list" aria-controls="lesson-picker-options" aria-expanded="false" autocomplete="off"></div>
+            <div id="lesson-picker-options" class="chip-picker-options" role="listbox" aria-label="Choices"></div>
+            <p id="lesson-picker-empty" class="chip-picker-empty" hidden>No matches. Try another name.</p>
+            <p id="lesson-picker-status" class="chip-picker-status" role="status" aria-live="polite"></p>
           </div>
-          <p id="lesson-identity-hint" class="field-hint"></p>
-        </div>
-        <div class="form-row"><div class="form-field"><label for="lesson-teacher">Teacher</label><select id="lesson-teacher" name="teacherId" required></select></div><div class="form-field"><label for="lesson-group">Group</label><input id="lesson-group" name="group" placeholder="e.g. Young explorers" maxlength="120"></div></div>
+        </fieldset>
+        <div class="form-row"><div id="demo-teacher-field" class="form-field"><label for="lesson-teacher">Teacher</label><select id="lesson-teacher" name="teacherId" required></select></div><div class="form-field"><label for="lesson-group">Group</label><input id="lesson-group" name="group" placeholder="e.g. Young explorers" maxlength="120"></div></div>
         <fieldset class="time-fields"><legend><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg>School time · Vladivostok (UTC+10)</legend><div class="form-row"><div class="form-field"><label for="lesson-start">Starts</label><input id="lesson-start" name="start" type="datetime-local" step="any" aria-describedby="lesson-duration-hint lesson-date-context" required></div><div class="form-field"><label for="lesson-end">Ends</label><input id="lesson-end" name="end" type="datetime-local" step="any" aria-describedby="lesson-duration-hint lesson-date-context" required></div></div><div class="duration-control"><div class="form-field duration-field"><label for="lesson-duration">Duration</label><select id="lesson-duration" aria-describedby="lesson-duration-hint"><option value="40">40 min</option><option value="60">60 min</option><option value="80">80 min</option><option id="lesson-duration-custom" value="custom">Custom (edit end time)</option></select></div><p id="lesson-duration-hint" class="field-hint">Changing Start keeps this duration. Edit End for a custom duration.</p></div><p id="lesson-date-context" class="date-registry-context" role="status" aria-live="polite" hidden></p></fieldset>
         <div class="form-row"><div class="form-field"><label for="lesson-room">Room</label><input id="lesson-room" name="room" placeholder="Room or meeting link" maxlength="120"></div><div class="form-field"><label for="lesson-status">Status</label><select id="lesson-status" name="status"><option value="scheduled">Scheduled</option><option value="cancelled">Cancelled</option></select></div></div>
         <div class="form-field"><label for="lesson-participants">Participant notes</label><input id="lesson-participants" name="participantText" placeholder="Names or lesson-level participant notes" maxlength="500"></div>
