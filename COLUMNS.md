@@ -20,6 +20,8 @@ Existing column definitions and input values are protected unless the user expli
 | `student`, `group2` | Classify rows and identify students/groups. Existing references are read-only in the editor; new individual lessons select exactly one student and no group. | Accepted. |
 | `Calendar_Parent` | Ref:ALL_ATT from a group attendance row to its particular group lesson header. Individual attendance belongs to its own row. | Accepted; the day registry does not replace this lesson link. |
 | `Calendar_Date` | Formula Ref:DateRegistry derived from this row's own `start` in Asia/Vladivostok. Empty if the timestamp or unique matching date is missing. | Implemented; Grist recalculates it, the calendar never writes it directly. |
+| `day` | Text lookup formula `$Calendar_Date.Day`, reading the linked registry weekday. | The user replaced the original helper on 2026-10-16; live definition and lookup values verified. |
+| Former `date`, `hasDate` | Legacy date/existence helpers. | Removed by the user; absence verified 2026-10-16. Grist display/summary consequences are recorded below. |
 | `Calendar_UID` | Stored creation/retry identity. The app supplies an ID before creating a row, so retrying a lost response finds that same row. Preparation also uses deterministic IDs. | Accepted shared identifier column; new rows entered directly in Grist may receive a UUID default. See the identity decision below. |
 | `Calendar_Revision` | Formula fingerprint of protected scheduling, reference and calendar fields. Atomic saves compare it to detect concurrent changes, including direct Grist edits. | Implemented; retain this protection. A stable UUID cannot replace a revision. |
 | `Calendar_Mutation` | Identifies a particular save/delete operation so its retry can recognize an already completed write. | Implemented; retain separately from permanent identity. |
@@ -158,7 +160,7 @@ The app reads the registry once per snapshot and joins metadata by the lesson's 
 
 Missing, duplicate or unreadable registry metadata never hides a valid lesson. Snapshot metadata reports aggregate coverage/ambiguity; this is not yet a user-facing maintenance dashboard. Date metadata and Calendar_Date are excluded from lesson revisions, so changing a term label does not invalidate an open scheduling draft. Demo behavior is unchanged without registry metadata.
 
-### Concrete cleanup audit — 2026-10-16, no live changes
+### Cleanup audit before the user's helper deletion — 2026-10-16, read-only
 
 Fresh inspection covered all 18 document tables and their column definitions, view fields, saved filters, section links/sorts and ACL metadata. The active calendar does not read ALL_ATT.date, day or hasDate. All 3,764 dated ALL_ATT rows currently have a registry link; their date and short weekday values match DateRegistry.Date and the first three characters of DateRegistry.Day. This equivalence is verified for current data, not an assumption about dates outside registry coverage.
 
@@ -168,12 +170,28 @@ Saved section options/filter specifications contained no matching helper-field g
 | --- | --- | --- |
 | `ALL_ATT.hasDate` | Safe to remove within the audited document/calendar contract. | Formula is bool(start); no formula, reference-display, summary, filter, sort, link or ACL dependency found. It appears as a displayed field in 11 view sections, which will lose that column. |
 | `ALL_ATT.date` | Keep until consumers are migrated. | Calendar_Parent uses it as its reference display, the start column's today-highlighting rule reads it, and ALL_ATT_summary_date_day2 groups by it. Also displayed in 10 view sections. |
-| `ALL_ATT.day` | Keep until the summary is migrated. | ALL_ATT_summary_date_day2 groups by it. Also displayed in 10 view sections. The registry weekday is a full name; the old helper is abbreviated. |
+| `ALL_ATT.day` | Keep until the summary is migrated. | ALL_ATT_summary_date_day2 groups by it. Also displayed in 10 view sections. Both the registry weekday and old helper use abbreviated names. |
 | `DateRegistry.A`, `B`, `C` | Safe to remove within the audited document/calendar contract. | Empty default Any/formula columns; all cells blank across 3,653 rows, no relevant formula/typed-reference/summary/filter/sort/link/ACL consumer. Each appears in three view sections. Unrelated PERFORMANCE.C references are not dependencies on DateRegistry.C. |
 
 Before removing date/day, change Calendar_Parent's visible value and the today rule, and rebuild the date/day summary around Calendar_Date with weekday derived from the registry. Preserve its source-row group references, counts, row styling and any selection links used by widgets. Missing/duplicate/out-of-range registry dates still need an explicit fallback or maintenance policy. Do not simply delete the grouping columns from the existing summary.
 
 The remaining 12 base Calendar_* fields are all required by the current editor/adapter/revision/schema contract. Calendar_Group_Label is a possible future simplification because referenced group names already provide a fallback; an ordinary custom Calendar_Title could remain the override. Calendar_Participants is freeform participant text, not attendance references, and could be folded into Calendar_Notes if that separate UI field is unwanted. These are proposed feature/schema changes, not deletion approvals. All four fields currently have zero nonempty values; blank values do not remove their code dependencies. Preserve original attendance notes (2,868 nonempty rows), student/group references, room, manual checklist, scheduling state and concurrency identities.
+
+### Check after the user's helper deletion — 2026-10-16, read-only
+
+Fresh reads confirm that ALL_ATT.date and hasDate are absent. The original day column was also removed, and a new Text formula column named day now reads `$Calendar_Date.Day`; its new column identity distinguishes it from the old helper. DateRegistry.Day returns abbreviated Mon/Tue/Wed/Thu/Fri/Sat/Sun. The earlier audit's full-weekday statement was incorrect and has been corrected above.
+
+Calendar_Date itself is unchanged: it extracts the school date from this row's start, uses `DateRegistry.lookupRecords(Date=day)` to find exactly one registry row, and returns that reference. Here `day` is a local Python variable, not the removed ALL_ATT.day column. Its display helper reads `$Calendar_Date.Date`. Start still determines which day a lesson belongs to; the registry supplies that day's shared properties. A weekday lookup is `$Calendar_Date.Day`, not a replacement for the Calendar_Date reference formula.
+
+All 3,764 dated rows still reference the correct registry date; five rows have no start. The replacement weekday lookup and date display have zero mismatches or formula errors. All 949 nonempty Calendar_Parent links still resolve to existing rows. The running calendar API returns 2,815 lessons, 3,209 attendance entries and all 3,653 registry dates. This is a live API/data check, not a rendered-browser check or proof of every external widget's behavior.
+
+The deletion changed Grist presentation and summaries:
+
+- Calendar_Parent's date display helper is gone and its visible/display column settings are zero, so it has reverted to the default reference display. The lesson references themselves remain valid.
+- The start column's former today-highlighting rule is gone.
+- The two sections formerly backed by ALL_ATT_summary_date_day2 now use ALL_ATT_summary2, with no grouping columns. The original daily summary table is absent; these views no longer group by date/day.
+
+No live definitions, rows or view settings were changed by the assistant during this check. Proposed follow-up is to choose a useful parent display, restore any desired today highlighting through Calendar_Date.Date, and regroup the affected summaries by Calendar_Date while preserving aggregates and selection links. These presentation repairs require their own decision; they do not require recreating the removed date/hasDate columns or changing the working Calendar_Date formula. Registry gaps still need an explicit fallback or coverage policy for date-grouped reports.
 
 ### Original registry cleanup proposal — historical
 
