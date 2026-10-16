@@ -2,6 +2,8 @@
 
 ## Accepted product decisions
 
+- Live lesson titles show fixed teacher and student/group name capsules, in that order, with editable text before and after the pair. Names follow their references; the teacher uses the school's exact stored initials. The editable parts share a 160-character limit excluding names and encoding. Duplicates preserve these additions; clearing both parts restores names alone. Calendar_Group_Label remains separate editable metadata and does not override the group capsule.
+
 - Display hours: the school opens 08:00–22:00 Asia/Vladivostok. Day/Week default to these hours with a remembered full-day toggle. This is a display preference, not a scheduling restriction or DateRegistry closure rule. Month/Agenda remain full-day; lessons outside the displayed hours stay saved and can be revealed.
 
 1. Use a standalone browser tab with a full-window timetable, Google Calendar-style navigation and lesson interactions.
@@ -21,6 +23,8 @@
 The presentation layer uses normalized lesson, teacher and attendance records through interchangeable adapters. The asynchronous memory adapter serves the default fictional-data demo. The browser Grist adapter calls a loopback Node server, which validates scheduling fields and uses the configured Grist document. API credentials remain server-side.
 
 The active `all-att` model reads `ALL_ATT`, `PERFORMANCE` and `FOLKS`. `ALL_ATT.start` and Duration_Minutes own the schedule, end is derived, and t supplies teachers. Calendar_* columns hold calendar-specific text, state, identity and concurrency information. Calendar_Parent references a group header in the same table. Individual attendance belongs to its own row. The DateRegistry table supplies shared date metadata; ALL_ATT.DateRegistry is its derived reference, renamed from Calendar_Date. Grist DateTime values cross the server boundary as epoch seconds; the browser receives explicit UTC ISO instants and edits school wall-clock times.
+
+The title's editable text uses the existing stored Calendar_Title: `@calendar-title/v1:` followed by JSON `{ "before": "...", "after": "..." }`, or blank for names alone. The adapter derives the teacher plus student/group name each time; it never stores that generated pair. Untouched existing titles are omitted from update payloads and preserved byte for byte. Legacy plain text splits around the full automatic name or the student/group name alone; unmatched text remains after the names with a `·` separator. This requires no schema change or backfill. The [column contract](../COLUMNS.md#lesson-display-names--2026-10-16) records compatibility and validation details.
 
 Existing lesson type, student and group references are immutable through the calendar editor and API. New group headers may select an existing group; new individual lessons require exactly one existing student and no group. Moving a group header does not change child attendance dates. An individual edit changes its own schedule cells, so existing formulas may recalculate. The calendar does not write legacy `datetime`, `per`, notes, financial inputs or formula definitions directly.
 

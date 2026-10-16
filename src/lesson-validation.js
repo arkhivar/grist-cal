@@ -12,7 +12,7 @@ export function storeError(code, message) {
   return error;
 }
 
-export function validateLesson(lesson, teachers) {
+export function validateLesson(lesson, teachers, { requireTitle = true, titleTextLength = title => title.length } = {}) {
   for (const field of textFields) {
     if (typeof lesson[field] !== 'string') {
       throw storeError('VALIDATION_ERROR', `The ${field} field must be text.`);
@@ -20,11 +20,11 @@ export function validateLesson(lesson, teachers) {
   }
   lesson.title = lesson.title.trim();
   for (const [field, limit] of Object.entries(textLimits)) {
-    if (lesson[field].length > limit) {
+    if ((field === 'title' ? titleTextLength(lesson.title) : lesson[field].length) > limit) {
       throw storeError('VALIDATION_ERROR', `The ${field} field must be ${limit} characters or fewer.`);
     }
   }
-  if (!lesson.title) throw storeError('VALIDATION_ERROR', 'Give the lesson a title.');
+  if (requireTitle && !lesson.title) throw storeError('VALIDATION_ERROR', 'Give the lesson a title.');
   if (!teachers.some(({ id }) => id === lesson.teacherId)) {
     throw storeError('VALIDATION_ERROR', 'Choose a teacher for this lesson.');
   }

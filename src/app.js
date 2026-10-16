@@ -5,6 +5,7 @@ import { createDateContextIndex, dateContextFor, lessonDateDescription, setDateC
 import { createDurationController } from './duration.js';
 import { getTeacherChoices } from './teacher-choices.js';
 import { BUSINESS_START, BUSINESS_END, getHourVisibility } from './calendar-hours.js';
+import { createLessonTitleController, TITLE_TEXT_LIMIT } from './lesson-title.js';
 
 const $ = (id) => document.getElementById(id);
 const escape = (value = '') => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -38,6 +39,9 @@ async function start() {
   }
   const config = await readCalendarConfig();
   const isLive = config.mode === 'grist';
+  $('lesson-title').required = !isLive;
+  $('demo-title-field').hidden = isLive;
+  $('live-title-field').hidden = !isLive;
   const sourceLabel = isLive ? (config.label || 'Grist sandbox') : 'Sample school';
   const readyText = isLive ? 'Connected to Grist' : 'Demo ready';
   document.body.dataset.mode = config.mode;
@@ -80,6 +84,7 @@ async function start() {
   let busy = false;
   let editor = null;
   let durationController = null;
+  let titleController = null;
   let editorSaving = false;
   let refreshing = false;
   let toastTimer;
@@ -290,6 +295,9 @@ async function start() {
   function rawDraft() {
     const draft = Object.fromEntries(Array.from($('lesson-form').querySelectorAll('[name]'), input => [input.name, input.value]));
     if (isLive) {
+      // Only deliberate title edits become stored overrides; reference names stay automatic.
+      delete draft.title;
+      Object.assign(draft, titleController?.submissionFields());
       draft.lessonKind = $('lesson-kind').value;
       draft.studentIds = draft.lessonKind === 'individual' ? JSON.parse($('lesson-student').value || '[]') : [];
       draft.groupIds = draft.lessonKind === 'group' ? JSON.parse($('lesson-group-ref').value || '[]') : [];
@@ -318,6 +326,40 @@ async function start() {
     $('lesson-identity-hint').textContent = editor?.id
       ? 'The lesson type and student/group links are kept when editing. Scheduling changes do not mark attendance.'
       : individual ? 'Choose one student. Booking this lesson does not record attendance.' : 'Choose a group, or leave it unassigned. Attendance can be linked later.';
+    updateAutomaticTitle();
+  }
+
+  function automaticEditorTitle() {
+    const individual = $('lesson-kind').value === 'individual';
+    const ids = JSON.parse($(individual ? 'lesson-student' : 'lesson-group-ref').value || '[]')
+      .sort((left, right) => Number(left.split(':')[1]) - Number(right.split(':')[1]));
+    const choices = (individual ? snapshot.students : snapshot.groups) || [];
+    const referenceTitle = ids.map(id => choices.find(item => item.id === id)?.name || `${individual ? 'Student' : 'Group'} #${id.split(':')[1]}`)
+      .join(individual ? ', ' : ' · ') || (individual ? 'Student not assigned' : 'Group not assigned');
+    const teacherTitle = snapshot.teachers.find(teacher => teacher.id === $('lesson-teacher').value)?.name || 'Teacher not assigned';
+    return { referenceTitle, teacherTitle, automaticTitle: `${teacherTitle} · ${referenceTitle}` };
+  }
+
+  function renderTitle() {
+    if (!titleController) return;
+    const state = titleController.getState();
+    const names = automaticEditorTitle();
+    $('lesson-title-teacher').textContent = names.teacherTitle;
+    $('lesson-title-name').textContent = names.referenceTitle;
+    for (const side of ['before', 'after']) {
+      const input = $(`lesson-title-${side}`);
+      if (input.value !== state[side]) input.value = state[side];
+      input.style.width = `${Math.max(11, state[side].length + 1)}ch`;
+    }
+    const writesTitle = Object.hasOwn(titleController.submissionFields(), 'title');
+    $('lesson-title-after').setCustomValidity(writesTitle && state.textLength > TITLE_TEXT_LIMIT
+      ? `Use ${TITLE_TEXT_LIMIT} characters or fewer for your added title text.` : '');
+  }
+
+  function updateAutomaticTitle() {
+    if (!isLive || !titleController) return;
+    titleController.updateAutomatic(automaticEditorTitle().automaticTitle);
+    renderTitle();
   }
 
   function isDirty() { return editor && JSON.stringify(rawDraft()) !== editor.initial; }
@@ -360,6 +402,7 @@ async function start() {
     $('lesson-dialog').close();
     editor = null;
     durationController = null;
+    titleController = null;
     if (editorOpener?.isConnected && !editorOpener.closest('[inert]') && editorOpener.getClientRects().length) editorOpener.focus({ preventScroll: true });
     else $('sidebar-toggle').focus({ preventScroll: true });
   }
@@ -420,6 +463,9 @@ async function start() {
       input.value = ['start', 'end'].includes(input.name) ? preciseSchoolInput(lesson[input.name]) : lesson[input.name] || '';
     }
     $('lesson-teacher').value = teacherChoices.teacherId;
+    titleController = isLive ? createLessonTitleController({ ...automaticEditorTitle(),
+      titleOverride: lesson.titleOverride || '', existing: Boolean(existing) }) : null;
+    renderTitle();
     durationController = createDurationController($('lesson-start').value, $('lesson-end').value);
     renderDuration();
     $('form-error').hidden = true;
@@ -434,7 +480,7 @@ async function start() {
     syncLessonIdentity();
     closeMobileSidebar();
     $('lesson-dialog').showModal();
-    $('lesson-title').focus();
+    $(isLive ? 'lesson-title-after' : 'lesson-title').focus();
   }
 
   function restoreMenuFocus(target) {
@@ -748,6 +794,7 @@ async function start() {
 
   function acceptSnapshot(next) {
     snapshot = next;
+    updateAutomaticTitle();
     const nextDateVersion = JSON.stringify(snapshot.calendarDates || []);
     if (nextDateVersion !== dateContextVersion) {
       dateContextVersion = nextDateVersion;
@@ -852,6 +899,15 @@ async function start() {
   mobile.addEventListener('change', syncSidebar);
   $('lesson-form').addEventListener('submit', saveEditor);
   $('lesson-kind').addEventListener('change', syncLessonIdentity);
+  $('lesson-student').addEventListener('change', updateAutomaticTitle);
+  $('lesson-group-ref').addEventListener('change', updateAutomaticTitle);
+  $('lesson-teacher').addEventListener('change', updateAutomaticTitle);
+  for (const side of ['before', 'after']) {
+    $(`lesson-title-${side}`).addEventListener('input', event => {
+      titleController?.changeAffix(side, event.target.value);
+      renderTitle();
+    });
+  }
   $('lesson-start').addEventListener('input', changeLessonStart);
   $('lesson-end').addEventListener('input', changeLessonEnd);
   $('lesson-duration').addEventListener('change', changeLessonDuration);

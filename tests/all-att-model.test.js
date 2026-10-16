@@ -30,7 +30,7 @@ test('six group attendance rows and one header produce one event with six linked
   const result = normalize(rows);
   assert.deepEqual(result.lessons.map(lesson => lesson.id), ['all-att:10']);
   assert.equal(result.lessons[0].lessonKind, 'group');
-  assert.equal(result.lessons[0].title, 'Group A');
+  assert.equal(result.lessons[0].title, 'Teacher One · Group A');
   assert.deepEqual(result.lessons[0].studentIds, []);
   assert.deepEqual(result.lessons[0].groupIds, ['per:31']);
   assert.equal(result.attendance.length, 6);
@@ -161,13 +161,60 @@ test('teacher choices use exact Grist initials and only individual team rows are
 test('calendar metadata stays separate from original attendance notes and no money/note infers attendance status', () => {
   const result = normalize([row(1, { notes: 'Absent? Paid?', wage: 0, count: 0, Calendar_Title: 'Lesson title',
     Calendar_Notes: 'Schedule note', Calendar_Checklist: '3/9', Calendar_Room: 'Room 1', Calendar_Participants: 'Bring book' })]);
-  assert.equal(result.lessons[0].title, 'Lesson title');
+  assert.equal(result.lessons[0].title, 'Teacher One · Student One · Lesson title');
   assert.equal(result.lessons[0].notes, 'Schedule note');
   assert.equal(result.lessons[0].checklist, '3/9');
   assert.equal(result.lessons[0].room, 'Room 1');
   assert.equal(result.lessons[0].participantText, 'Bring book');
   assert.equal(result.attendance[0].notes, 'Absent? Paid?');
   assert.equal(result.attendance[0].status, 'recorded');
+});
+
+test('automatic titles use reference names while explicit overrides and group metadata stay separate', () => {
+  const rows = [row(1, { Calendar_Title: '  Student One · Exam preparation  ', Calendar_Group_Label: 'Old group label' }),
+    header(10, { Calendar_Title: 'Custom title', Calendar_Group_Label: 'Custom group label' }),
+    header(11, { group2: ['L'], Calendar_Title: '  ', Calendar_Group_Label: 'Custom group label' })];
+  const before = structuredClone(rows);
+  const result = normalize(rows);
+  assert.deepEqual(result.lessons.map(lesson => lesson.referenceTitle), ['Student One', 'Group A', 'Group not assigned']);
+  assert.deepEqual(result.lessons.map(lesson => lesson.autoTitle),
+    ['Teacher One · Student One', 'Teacher One · Group A', 'Teacher One · Group not assigned']);
+  assert.deepEqual(result.lessons.map(lesson => lesson.title),
+    ['Teacher One · Student One · Exam preparation', 'Teacher One · Group A · Custom title', 'Teacher One · Group not assigned']);
+  assert.deepEqual(result.lessons.map(lesson => lesson.titleOverride), ['  Student One · Exam preparation  ', 'Custom title', '  ']);
+  assert.deepEqual(result.lessons.map(lesson => lesson.group), ['Old group label', 'Custom group label', 'Custom group label']);
+  assert.deepEqual(rows, before);
+  assert.equal(lessonFields(rows[0]).Calendar_Title, '  Student One · Exam preparation  ');
+  assert.notEqual(lessonVersion(rows[0]), lessonVersion({ ...rows[0].fields, Calendar_Title: 'Changed metadata' }));
+});
+
+test('missing and multiple title references use stable readable names without lesson prefixes', () => {
+  const result = normalize([row(1, { student: ['L', 999, 2, 1, 2] }), header(10, { group2: ['L', 999, 31, 31] })]);
+  assert.deepEqual(result.lessons.map(lesson => lesson.title),
+    ['Teacher One · Student One, Student Two, Student #999', 'Teacher One · Group A · Group #999']);
+});
+
+test('automatic titles retain exact teacher initials and readable missing or multiple teacher identities', () => {
+  const result = normalizeAllAttSnapshot({ attendance: [row(1), row(2, { t: ['L'] }), row(3, { t: ['L', 999, 18, 17] })],
+    performance: performance.map(record => record.id === 17 ? { ...record, fields: { ...record.fields, name: 'aB' } } : record), folks });
+  assert.deepEqual(result.lessons.map(lesson => lesson.autoTitle),
+    ['aB · Student One', 'Unassigned · Student One', 'aB + Teacher Two + Teacher #999 · Student One']);
+  assert.ok(result.lessons.every(lesson => lesson.referenceTitle === 'Student One'));
+});
+
+test('reference name updates change displayed titles without changing raw lesson revisions', () => {
+  const attendance = [row(1), row(2, { Calendar_Title: 'Custom student lesson' }), header(10, { Calendar_Group_Label: 'Retained label' })];
+  const before = normalize(attendance);
+  const after = normalizeAllAttSnapshot({ attendance,
+    performance: performance.map(record => [17, 31].includes(record.id)
+      ? { ...record, fields: { ...record.fields, name: record.id === 17 ? 'New teacher' : 'Renamed group' } } : record),
+    folks: folks.map(record => record.id === 1 ? { ...record, fields: { ...record.fields, name: 'Renamed student' } } : record),
+  });
+  assert.deepEqual(after.lessons.map(lesson => lesson.title),
+    ['New teacher · Renamed student', 'New teacher · Renamed student · Custom student lesson', 'New teacher · Renamed group']);
+  assert.deepEqual(after.lessons.map(lesson => lesson.autoTitle),
+    ['New teacher · Renamed student', 'New teacher · Renamed student', 'New teacher · Renamed group']);
+  assert.deepEqual(after.lessons.map(lesson => lesson.version), before.lessons.map(lesson => lesson.version));
 });
 
 test('generated group headers wait for explicit child linkage and retain metadata for resumable preparation', () => {

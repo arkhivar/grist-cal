@@ -142,3 +142,15 @@ Expected browser checks, not observations:
 The write adapter now translates UI endpoints to stored start/Duration_Minutes, with end calculated by Grist. Live HTTP/API tests passed creation, direct Grist minutes edits, stale-save rejection, duration-preserving moves, fractional resizing, metadata-only editing, mutation retries and deletion. All isolated fixtures were removed and original inputs preserved. Historical start-only-save behavior above is superseded: start-only moves now preserve duration.
 
 Browser interaction remains unverified under the existing local-preview access restriction. In addition to the checks above, verify a fractional duration entered in Grist retains its seconds when opened, duplicated or saved after a title-only edit; then move/resize it using an actual pointer. HTTP/controller checks do not establish native datetime input behavior or drag geometry.
+
+## Linked title capsules — 2026-10-16
+
+Interactive verification remains pending under the existing local-preview URL restriction. The connected server's config, snapshot and updated editor assets returned HTTP 200; all 2,820 read-only lesson titles contained teacher-first reference names. The 288-test suite passes, including title controller/model/store checks. New-format saves were tested with isolated fixtures, not live writes.
+
+Expected browser checks, not observations:
+
+- The live title editor displays teacher first and student/group second as fixed capsules. Tab reaches the labelled text fields before and after the pair; both keep visible keyboard focus. The demo retains its original title input.
+- Add text on both sides, change the teacher or a new lesson's student/group, and confirm only the appropriate capsule changes. Clear both sides to return to names alone.
+- Save, reopen and duplicate a lesson with both additions. A duplicate with another student/group keeps the text but updates the name. Attendance stays with the source.
+- Refresh after a reference rename and retry a failed save without losing custom text. An untouched existing title should not create a dirty draft or a title write.
+- Check 390px layout, long names and historical multiple references. Capsules wrap without editing or clipping their text; the two input fields remain usable. The combined custom-text limit is 160 characters, excluding names.

@@ -1,4 +1,5 @@
 import { editableFields, storeError, validateLesson } from '../src/lesson-validation.js';
+import { lessonTitleTextLength } from '../src/lesson-title.js';
 import { schoolToday } from '../src/domain.js';
 import { ALL_ATT_FIELDS, PERFORMANCE_FIELDS, classifyRow, lessonFields, lessonVersion, normalizeAllAttSnapshot } from './all-att-model.mjs';
 import { DATE_REGISTRY_FIELDS, DATE_REGISTRY_TABLE, inspectDateRegistry } from './date-registry.mjs';
@@ -90,7 +91,13 @@ function candidateFrom(draft, existing, snapshot, sourceDuration) {
       throw failure('VALIDATION_ERROR', 'Choose existing students and groups for this lesson.', 400);
     }
   }
-  try { return validateLesson(candidate, snapshot.teachers); }
+  try {
+    validateLesson(candidate, snapshot.teachers, { requireTitle: false, titleTextLength: lessonTitleTextLength });
+    // The displayed title may be automatic. Omitted title metadata must retain
+    // its original stored value, including whitespace, during unrelated edits.
+    if (existing && !Object.hasOwn(draft, 'title')) candidate.title = existing.title;
+    return candidate;
+  }
   catch (error) { error.status = 400; throw error; }
 }
 function writableValues(candidate, teachers, { existing, retainedTeacherId, sourceDuration, preserveDuration }) {
@@ -189,7 +196,10 @@ export function createAllAttStore({ client } = {}) {
     if (isUpdate && !validRevision(current)) {
       throw failure('SCHEMA_ERROR', 'The calendar revision formula is unavailable. Check the Grist calendar setup before saving.', 503);
     }
-    const existing = isUpdate ? snapshot.lessons.find(lesson => lesson.id === draft.id) : null;
+    const displayedLesson = isUpdate ? snapshot.lessons.find(lesson => lesson.id === draft.id) : null;
+    const existing = displayedLesson ? { ...displayedLesson,
+      title: typeof current.fields.Calendar_Title === 'string' ? current.fields.Calendar_Title : '',
+    } : null;
     if (isUpdate && !existing) throw failure('VERSION_CONFLICT', 'This lesson needs valid scheduling data before it can be edited.', 409);
     const sourceDuration = current?.fields.Duration_Minutes;
     if (isUpdate && (typeof sourceDuration !== 'number' || !Number.isFinite(sourceDuration) || sourceDuration <= 0)) {

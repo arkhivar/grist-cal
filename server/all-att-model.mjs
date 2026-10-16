@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { schoolToday } from '../src/domain.js';
+import { renderLessonTitle } from '../src/lesson-title.js';
 export { refs } from './grist-model.mjs';
 import { refs } from './grist-model.mjs';
 
@@ -134,13 +135,16 @@ export function normalizeAllAttSnapshot({ attendance = [], performance = [], fol
     }
     const students = refs(fields.student);
     const groups = refs(fields.group2);
-    const group = text(fields.Calendar_Group_Label) || groups.map(id => groupName(id, performanceById)).join(' · ');
-    const defaultTitle = lessonKind === 'individual'
-      ? `Individual lesson · ${students.map(id => studentName(id, folksById)).join(', ')}`
-      : group || 'Group lesson';
+    const referencedGroupNames = groups.map(id => groupName(id, performanceById)).join(' · ');
+    const group = text(fields.Calendar_Group_Label) || referencedGroupNames;
+    const referenceTitle = lessonKind === 'individual'
+      ? students.map(id => studentName(id, folksById)).join(', ')
+      : referencedGroupNames || 'Group not assigned';
+    const autoTitle = `${teachersById.get(teacher).name} · ${referenceTitle}`;
+    const titleOverride = text(fields.Calendar_Title);
     normalizedLessons.push({
       id: lessonId(record.id), sourceRowId: record.id, type: 'lesson', lessonKind,
-      title: text(fields.Calendar_Title).trim() || defaultTitle,
+      title: renderLessonTitle(titleOverride, autoTitle, referenceTitle), autoTitle, referenceTitle, titleOverride,
       teacherId: teacher, studentIds: students.map(id => `folks:${id}`),
       studentNames: students.map(id => studentName(id, folksById)), groupIds: groups.map(id => `per:${id}`),
       group, start, end, durationMinutes, room: text(fields.Calendar_Room), participantText: text(fields.Calendar_Participants),

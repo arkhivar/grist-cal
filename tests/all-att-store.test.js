@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { createAllAttStore } from '../server/all-att-store.mjs';
 import { ALL_ATT_FIELDS, PERFORMANCE_FIELDS, lessonVersion } from '../server/all-att-model.mjs';
 import { DATE_REGISTRY_FIELDS } from '../server/date-registry.mjs';
+import { encodeLessonTitle } from '../src/lesson-title.js';
 
 const UID = '12345678-1234-4123-8123-123456789abc';
 const NEW_UID = '22345678-1234-4123-8123-123456789abc';
@@ -113,6 +114,8 @@ const freshDraft = () => ({ clientId: NEW_UID, type: 'lesson', title: 'New lesso
   start: '2026-10-14T10:00:00+10:00', end: '2026-10-14T11:00:00+10:00', group: '', room: '',
   participantText: '', checklist: '', notes: '', status: 'scheduled', lessonKind: 'group', studentIds: [], groupIds: [] });
 const groupLesson = async store => (await store.getSnapshot()).lessons.find(lesson => lesson.id === 'all-att:7');
+// The editor omits untouched title metadata instead of submitting its composed display.
+const editingDraft = ({ title, autoTitle, referenceTitle, titleOverride, ...lesson }) => lesson;
 
 test('ALL_ATT snapshot projects scheduling sources and date metadata once, never the legacy lesson table', async () => {
   const client = mockClient();
@@ -146,7 +149,7 @@ test('DateRegistry follows the Vladivostok date after a move without entering so
   const lesson = await groupLesson(store);
   assert.equal(client.tables.ALL_ATT[0].fields.DateRegistry, 101);
   client.reads.length = 0;
-  const saved = await store.saveLesson({ ...lesson,
+  const saved = await store.saveLesson({ ...editingDraft(lesson),
     start: '2026-10-13T14:30:00Z', end: '2026-10-13T15:30:00Z', calendarDateId: 'date:999', DateRegistry: 999 },
   { expectedVersion: lesson.version, mutationId: MUTATION });
   assert.equal(saved.start, '2026-10-13T14:30:00.000Z');
@@ -179,7 +182,7 @@ test('DateRegistry metadata and derived reference changes do not invalidate an o
   assert.equal(client.tables.ALL_ATT[0].fields.DateRegistry, 201);
   assert.equal(refreshed.calendarDates[0].holidayName, 'New fictional holiday');
   client.reads.length = 0;
-  const saved = await store.saveLesson({ ...lesson, room: 'New room' },
+  const saved = await store.saveLesson({ ...editingDraft(lesson), room: 'New room' },
     { expectedVersion: lesson.version, mutationId: MUTATION });
   assert.equal(saved.room, 'New room');
   assert.equal(client.reads.filter(read => read.table === 'DateRegistry').length, 0);
@@ -220,7 +223,7 @@ test('registry read failures preserve the usable schedule and expose only an agg
   assert.equal(snapshot.meta.dateRegistry.unmatchedLessonCount, 2);
   assert.ok(!JSON.stringify(snapshot).includes('Private registry'));
   const lesson = snapshot.lessons.find(item => item.id === 'all-att:7');
-  const saved = await store.saveLesson({ ...lesson, room: 'Still editable' },
+  const saved = await store.saveLesson({ ...editingDraft(lesson), room: 'Still editable' },
     { expectedVersion: lesson.version, mutationId: MUTATION });
   assert.equal(saved.room, 'Still editable');
   assert.equal(client.reads.filter(read => read.table === 'DateRegistry').length, 1);
@@ -297,7 +300,7 @@ test('ALL_ATT lesson edits write start/duration/t and calendar fields while end 
   const store = createAllAttStore({ client });
   const before = clone(client.tables);
   const lesson = await groupLesson(store);
-  const saved = await store.saveLesson({ ...lesson, teacherId: 'per:18', group: 'Display label only',
+  const saved = await store.saveLesson({ ...editingDraft(lesson), teacherId: 'per:18', group: 'Display label only',
     start: '2026-10-14T14:15:00+10:00', end: '2026-10-14T15:45:00+10:00', status: 'cancelled',
     notes: 'New calendar notes', wage: 0, student: ['L', 32], group2: ['L', 99], Calendar_UID: 'spoofed', attendance: [] },
   { expectedVersion: lesson.version, mutationId: MUTATION });
@@ -387,7 +390,7 @@ test('direct Grist duration edits conflict before submission and during atomic c
     const store = createAllAttStore({ client });
     const lesson = await groupLesson(store);
     if (!racing) client.tables.ALL_ATT[0].fields.Duration_Minutes = minutes;
-    await assert.rejects(store.saveLesson({ ...lesson, room: 'Must not overwrite concurrent duration' },
+    await assert.rejects(store.saveLesson({ ...editingDraft(lesson), room: 'Must not overwrite concurrent duration' },
       { expectedVersion: lesson.version, mutationId: MUTATION }), { code: 'VERSION_CONFLICT', status: 409 });
     assert.equal(client.tables.ALL_ATT[0].fields.Duration_Minutes, minutes);
     assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Room, 'Room 2');
@@ -452,10 +455,10 @@ test('ALL_ATT existing row identity and source attendance rows cannot be edited 
   const store = createAllAttStore({ client });
   const lesson = await groupLesson(store);
   for (const patch of [{ lessonKind: 'individual' }, { studentIds: ['folks:31'] }, { groupIds: [] }]) {
-    await assert.rejects(store.saveLesson({ ...lesson, ...patch }, { expectedVersion: lesson.version, mutationId: MUTATION }),
+    await assert.rejects(store.saveLesson({ ...editingDraft(lesson), ...patch }, { expectedVersion: lesson.version, mutationId: MUTATION }),
       { code: 'VALIDATION_ERROR', status: 400 });
   }
-  await assert.rejects(store.saveLesson({ ...lesson, id: 'all-att:55' },
+  await assert.rejects(store.saveLesson({ ...editingDraft(lesson), id: 'all-att:55' },
     { expectedVersion: lessonVersion(client.tables.ALL_ATT[1]), mutationId: MUTATION }), { code: 'VALIDATION_ERROR' });
   await assert.rejects(store.deleteLesson('all-att:55',
     { expectedVersion: lessonVersion(client.tables.ALL_ATT[1]), mutationId: MUTATION }), { code: 'VALIDATION_ERROR' });
@@ -489,8 +492,8 @@ test('ALL_ATT duplicating a group copies scheduling references and checklist, ne
   const store = createAllAttStore({ client });
   const source = await groupLesson(store);
   const children = clone(client.tables.ALL_ATT.slice(1));
-  const { id, version, ...draft } = source;
-  const duplicate = await store.saveLesson({ ...draft, clientId: NEW_UID, status: 'scheduled' }, { mutationId: MUTATION });
+  const { id, version, title, autoTitle, titleOverride, ...draft } = source;
+  const duplicate = await store.saveLesson({ ...draft, title: titleOverride, clientId: NEW_UID, status: 'scheduled' }, { mutationId: MUTATION });
   assert.equal(client.tables.ALL_ATT.length, 4);
   assert.equal(duplicate.checklist, source.checklist);
   assert.deepEqual(duplicate.groupIds, ['per:40']);
@@ -498,6 +501,193 @@ test('ALL_ATT duplicating a group copies scheduling references and checklist, ne
   assert.deepEqual(client.tables.ALL_ATT[3].fields.student, ['L']);
   assert.equal(client.tables.ALL_ATT[3].fields.Calendar_UID, NEW_UID);
   assert.ok(!(await store.getSnapshot()).attendance.some(row => row.lessonId === duplicate.id));
+});
+
+test('titleless creations keep automatic names and retry safely after a reference name changes', async () => {
+  for (const kind of ['group', 'individual']) {
+    const client = mockClient({ afterMutation() { throw networkFailure(); } });
+    const store = createAllAttStore({ client });
+    const draft = { ...freshDraft(), lessonKind: kind,
+      studentIds: kind === 'individual' ? ['folks:31'] : [], groupIds: kind === 'group' ? ['per:40'] : [] };
+    if (kind === 'individual') delete draft.title;
+    else draft.title = '';
+    const before = clone(client.tables.ALL_ATT);
+    const saved = await store.saveLesson(draft, { mutationId: MUTATION });
+    assert.equal(saved.title, kind === 'individual' ? 't1 · Fictional Student' : 't1 · Group A');
+    assert.equal(saved.autoTitle, saved.title);
+    assert.equal(saved.titleOverride, '');
+    assert.equal(client.tables.ALL_ATT.at(-1).fields.Calendar_Title, '');
+    assert.equal(client.tables.ALL_ATT.at(-1).fields.Calendar_Attendance, 'pending');
+    const catalogRow = kind === 'individual' ? client.tables.FOLKS[0] : client.tables.PERFORMANCE[2];
+    catalogRow.fields.name = `Renamed ${kind}`;
+    const retried = await store.saveLesson(draft, { mutationId: MUTATION });
+    assert.equal(retried.id, saved.id);
+    assert.equal(retried.title, `t1 · Renamed ${kind}`);
+    assert.equal(retried.titleOverride, '');
+    assert.equal(client.writes.length, 1);
+    assert.deepEqual(client.tables.ALL_ATT.slice(0, before.length), before);
+    assert.ok(!(await store.getSnapshot()).attendance.some(row => row.lessonId === saved.id));
+  }
+});
+
+test('automatic-name duplication never freezes a computed title or copies attendance', async () => {
+  const client = mockClient();
+  client.tables.ALL_ATT[0].fields.Calendar_Title = '';
+  const store = createAllAttStore({ client });
+  const source = await groupLesson(store);
+  const { id, version, title, autoTitle, titleOverride, ...details } = source;
+  const draft = { ...details, clientId: NEW_UID, title: '', status: 'scheduled' };
+  const saved = await store.saveLesson(draft, { mutationId: MUTATION });
+  assert.notEqual(saved.id, source.id);
+  assert.equal(saved.checklist, source.checklist);
+  assert.equal(saved.title, 't1 · Group A');
+  assert.equal(saved.titleOverride, '');
+  assert.equal(client.tables.ALL_ATT.at(-1).fields.Calendar_Title, '');
+  assert.equal(client.tables.ALL_ATT.at(-1).fields.Calendar_Parent, 0);
+  client.tables.PERFORMANCE[2].fields.name = 'Renamed group';
+  const retried = await store.saveLesson(draft, { mutationId: MUTATION });
+  assert.equal(retried.id, saved.id);
+  assert.equal(retried.title, 't1 · Renamed group');
+  assert.equal(client.writes.length, 1);
+  const snapshot = await store.getSnapshot();
+  assert.ok(snapshot.attendance.some(row => row.lessonId === source.id));
+  assert.ok(!snapshot.attendance.some(row => row.lessonId === saved.id));
+});
+
+test('omitted custom titles retain raw text while explicit blank restores automatic reference names', async () => {
+  const client = mockClient();
+  client.tables.ALL_ATT[0].fields.Calendar_Title = '  Group A · Exam preparation  ';
+  client.tables.ALL_ATT[0].fields.Calendar_Group_Label = 'Separate group metadata';
+  const store = createAllAttStore({ client });
+  const source = await groupLesson(store);
+  assert.equal(source.title, 't1 · Group A · Exam preparation');
+  assert.equal(source.autoTitle, 't1 · Group A');
+  const saved = await store.saveLesson({ id: source.id, room: 'Room 8' },
+    { expectedVersion: source.version, mutationId: MUTATION });
+  assert.equal(saved.titleOverride, '  Group A · Exam preparation  ');
+  assert.equal(saved.title, source.title);
+  assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Title, source.titleOverride);
+  assert.deepEqual(client.writes[0].body.records[0].fields, { Calendar_Mutation: MUTATION, Calendar_Room: 'Room 8' });
+  const cleared = await store.saveLesson({ id: source.id, title: '  ' },
+    { expectedVersion: saved.version, mutationId: OTHER_MUTATION });
+  assert.equal(cleared.title, 't1 · Group A');
+  assert.equal(cleared.autoTitle, 't1 · Group A');
+  assert.equal(cleared.titleOverride, '');
+  assert.equal(cleared.group, 'Separate group metadata');
+  assert.deepEqual(client.writes[1].body.records[0].fields, { Calendar_Mutation: OTHER_MUTATION, Calendar_Title: '' });
+});
+
+test('reference name refreshes do not freeze automatic titles during edits or retries', async () => {
+  const client = mockClient({ afterMutation() { throw networkFailure(); } });
+  client.tables.ALL_ATT[2].fields.Calendar_Title = '';
+  const store = createAllAttStore({ client });
+  const source = (await store.getSnapshot()).lessons.find(lesson => lesson.id === 'all-att:56');
+  client.tables.FOLKS[1].fields.name = 'A renamed student with a deliberately long name '.repeat(5);
+  const draft = { id: source.id, room: 'Room 8' };
+  const options = { expectedVersion: source.version, mutationId: MUTATION };
+  const saved = await store.saveLesson(draft, options);
+  assert.ok(saved.title.length > 160, 'Reference names are not custom-title inputs');
+  assert.equal(saved.title, `t1 · ${client.tables.FOLKS[1].fields.name.trim()}`);
+  assert.equal(saved.titleOverride, '');
+  assert.deepEqual(client.writes[0].body.records[0].fields, { Calendar_Mutation: MUTATION, Calendar_Room: 'Room 8' });
+  client.tables.FOLKS[1].fields.name = 'Another current name';
+  const retried = await store.saveLesson(draft, options);
+  assert.equal(retried.title, 't1 · Another current name');
+  assert.equal(retried.titleOverride, '');
+  assert.equal(client.writes.length, 1);
+  assert.equal(client.tables.ALL_ATT[2].fields.Calendar_Title, '');
+});
+
+test('custom title creation and edits remain explicit overrides with normal text validation', async () => {
+  const client = mockClient();
+  const store = createAllAttStore({ client });
+  for (const title of [null, 42, [], 'a'.repeat(161)]) {
+    await assert.rejects(store.saveLesson({ ...freshDraft(), title }, { mutationId: MUTATION }), { code: 'VALIDATION_ERROR' });
+  }
+  assert.equal(client.writes.length, 0);
+  const saved = await store.saveLesson({ ...freshDraft(), title: '  Group A · Exam preparation  ', groupIds: ['per:40'] },
+    { mutationId: MUTATION });
+  assert.equal(saved.title, 't1 · Group A · Exam preparation');
+  assert.equal(saved.titleOverride, 'Group A · Exam preparation');
+  assert.equal(saved.autoTitle, 't1 · Group A');
+  const edited = await store.saveLesson({ id: saved.id, title: 'Custom session' },
+    { expectedVersion: saved.version, mutationId: OTHER_MUTATION });
+  assert.equal(edited.title, 't1 · Group A · Custom session');
+  assert.equal(edited.titleOverride, 'Custom session');
+  assert.equal(edited.autoTitle, 't1 · Group A');
+});
+
+test('title affixes survive reference renames, lost create responses and explicit edit retries', async () => {
+  const client = mockClient({ afterMutation() { throw networkFailure(); } });
+  const store = createAllAttStore({ client });
+  const draft = { ...freshDraft(), lessonKind: 'individual', studentIds: ['folks:31'],
+    title: encodeLessonTitle({ before: 'Exam prep:', after: '· bring workbook' }) };
+  const saved = await store.saveLesson(draft, { mutationId: MUTATION });
+  assert.equal(saved.title, 'Exam prep: t1 · Fictional Student · bring workbook');
+  assert.equal(saved.titleOverride, draft.title);
+  assert.equal(client.tables.ALL_ATT.at(-1).fields.Calendar_Title, draft.title);
+  assert.ok(!draft.title.includes('Fictional Student'), 'The reference name is not frozen inside title metadata');
+  client.tables.FOLKS[0].fields.name = 'Renamed Student';
+  client.tables.PERFORMANCE[0].fields.name = 'tX';
+  const retried = await store.saveLesson(draft, { mutationId: MUTATION });
+  assert.equal(retried.id, saved.id);
+  assert.equal(retried.title, 'Exam prep: tX · Renamed Student · bring workbook');
+  assert.equal(client.writes.length, 1);
+
+  const edit = { id: saved.id, teacherId: 'per:18', title: encodeLessonTitle({ before: 'Conversation:', after: '(online)' }) };
+  const options = { expectedVersion: saved.version, mutationId: OTHER_MUTATION };
+  const edited = await store.saveLesson(edit, options);
+  assert.equal(edited.title, 'Conversation: т2 · Renamed Student (online)');
+  assert.equal(edited.titleOverride, edit.title);
+  assert.deepEqual(client.writes[1].body.records[0].fields,
+    { Calendar_Mutation: OTHER_MUTATION, Calendar_Title: edit.title, t: ['L', 18] });
+  client.tables.FOLKS[0].fields.name = 'Current Student';
+  const editRetry = await store.saveLesson(edit, options);
+  assert.equal(editRetry.title, 'Conversation: т2 · Current Student (online)');
+  assert.equal(editRetry.titleOverride, edit.title);
+  assert.equal(client.writes.length, 2);
+});
+
+test('duplicated title affixes retain the name capsule and never copy linked attendance', async () => {
+  const client = mockClient();
+  const rawTitle = encodeLessonTitle({ before: 'Review:', after: '(room change)' });
+  client.tables.ALL_ATT[0].fields.Calendar_Title = rawTitle;
+  const store = createAllAttStore({ client });
+  const source = await groupLesson(store);
+  const { id, version, ...details } = editingDraft(source);
+  const draft = { ...details, clientId: NEW_UID, title: source.titleOverride, status: 'scheduled' };
+  const saved = await store.saveLesson(draft, { mutationId: MUTATION });
+  assert.notEqual(saved.id, source.id);
+  assert.equal(saved.title, 'Review: t1 · Group A (room change)');
+  assert.equal(saved.titleOverride, rawTitle);
+  client.tables.PERFORMANCE[2].fields.name = 'Renamed Group';
+  const retry = await store.saveLesson(draft, { mutationId: MUTATION });
+  assert.equal(retry.id, saved.id);
+  assert.equal(retry.title, 'Review: t1 · Renamed Group (room change)');
+  assert.equal(client.writes.length, 1);
+  const snapshot = await store.getSnapshot();
+  assert.ok(snapshot.attendance.some(row => row.lessonId === source.id));
+  assert.ok(!snapshot.attendance.some(row => row.lessonId === saved.id));
+});
+
+test('title limits count decoded editable text instead of envelope overhead or the fixed name', async () => {
+  const client = mockClient();
+  client.tables.FOLKS[0].fields.name = 'Long reference name '.repeat(20);
+  const store = createAllAttStore({ client });
+  const exact = encodeLessonTitle({ before: '"'.repeat(80), after: '\\'.repeat(80) });
+  assert.ok(exact.length > 160);
+  const saved = await store.saveLesson({ ...freshDraft(), title: exact, lessonKind: 'individual', studentIds: ['folks:31'] },
+    { mutationId: MUTATION });
+  assert.equal(saved.titleOverride, exact);
+  assert.ok(saved.title.length > 160);
+  const invalid = [encodeLessonTitle({ before: 'a'.repeat(81), after: 'b'.repeat(80) }),
+    '@calendar-title/v1:' + JSON.stringify({ before: 'a'.repeat(160), after: '', extra: 'unrecognized key' })];
+  for (const title of invalid) {
+    await assert.rejects(store.saveLesson({ id: saved.id, title },
+      { expectedVersion: saved.version, mutationId: OTHER_MUTATION }), { code: 'VALIDATION_ERROR' });
+  }
+  assert.equal(client.writes.length, 1);
+  assert.equal(client.tables.ALL_ATT.at(-1).fields.Calendar_Title, exact);
 });
 
 test('ALL_ATT creation rejects invalid classification, references, teacher, dates and identifiers without writes', async () => {
@@ -522,7 +712,7 @@ test('ALL_ATT atomic revision catches concurrent reference or classification cha
     const client = mockClient({ beforeMutation: tables => Object.assign(tables.ALL_ATT[0].fields, patch) });
     const store = createAllAttStore({ client });
     const lesson = await groupLesson(store);
-    await assert.rejects(store.saveLesson({ ...lesson, title: 'Must not overwrite' },
+    await assert.rejects(store.saveLesson({ ...editingDraft(lesson), title: 'Must not overwrite' },
       { expectedVersion: lesson.version, mutationId: MUTATION }), { code: 'VERSION_CONFLICT', status: 409 });
     assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Title, 'Lesson A');
     for (const [field, value] of Object.entries(patch)) assert.deepEqual(client.tables.ALL_ATT[0].fields[field], value);
@@ -543,7 +733,7 @@ test('ALL_ATT dangling legacy group and teacher references can be retained but n
   await assert.rejects(store.saveLesson({ ...individual, teacherId: 'per:998' },
     { expectedVersion: individual.version, mutationId: MUTATION }), { code: 'VALIDATION_ERROR' });
   assert.equal(client.writes.length, 0);
-  await store.saveLesson({ ...lesson, room: 'Updated room' }, { expectedVersion: lesson.version, mutationId: MUTATION });
+  await store.saveLesson({ ...editingDraft(lesson), room: 'Updated room' }, { expectedVersion: lesson.version, mutationId: MUTATION });
   assert.deepEqual(client.tables.ALL_ATT[0].fields.t, ['L', 998]);
   assert.deepEqual(client.tables.ALL_ATT[0].fields.group2, ['L', 999]);
   assert.equal(client.tables.ALL_ATT[0].fields.Calendar_Room, 'Updated room');
@@ -563,7 +753,7 @@ test('new and changed teacher choices require one team record while historical a
     await assert.rejects(store.saveLesson({ ...individual, teacherId: lesson.teacherId, selectable: true },
       { expectedVersion: individual.version, mutationId: MUTATION }), { code: 'VALIDATION_ERROR' });
     assert.equal(client.writes.length, 0);
-    const saved = await store.saveLesson({ ...lesson, title: 'Metadata edit preserving teacher' },
+    const saved = await store.saveLesson({ ...editingDraft(lesson), title: 'Metadata edit preserving teacher' },
       { expectedVersion: lesson.version, mutationId: MUTATION });
     assert.equal(saved.teacherId, lesson.teacherId);
     assert.deepEqual(client.tables.ALL_ATT[0].fields.t, sourceRefs);
@@ -578,7 +768,7 @@ test('current team labels govern new selections without invalidating unchanged h
   client.tables.PERFORMANCE[0].fields.label = 'guest';
   client.tables.PERFORMANCE[1].fields.label = ' TEAM ';
   await assert.rejects(store.saveLesson(freshDraft(), { mutationId: MUTATION }), { code: 'VALIDATION_ERROR' });
-  const retained = await store.saveLesson({ ...lesson, room: 'Preserve historical teacher' },
+  const retained = await store.saveLesson({ ...editingDraft(lesson), room: 'Preserve historical teacher' },
     { expectedVersion: lesson.version, mutationId: MUTATION });
   assert.equal(retained.teacherId, 'per:17');
   const changed = await store.saveLesson({ ...retained, teacherId: 'per:18' },
@@ -607,7 +797,7 @@ test('ALL_ATT malformed revision blocks edits and deletes before mutation', asyn
   const client = mockClient({ invalidRevision: true });
   const store = createAllAttStore({ client });
   const lesson = await groupLesson(store);
-  await assert.rejects(store.saveLesson({ ...lesson, title: 'Unsafe' },
+  await assert.rejects(store.saveLesson({ ...editingDraft(lesson), title: 'Unsafe' },
     { expectedVersion: lesson.version, mutationId: MUTATION }), { code: 'SCHEMA_ERROR', status: 503 });
   await assert.rejects(store.deleteLesson(lesson.id,
     { expectedVersion: lesson.version, mutationId: MUTATION }), { code: 'SCHEMA_ERROR', status: 503 });
@@ -622,8 +812,8 @@ test('ALL_ATT atomic revision permits only one competing edit', async () => {
   const store = createAllAttStore({ client });
   const lesson = await groupLesson(store);
   const results = await Promise.allSettled([
-    store.saveLesson({ ...lesson, title: 'First writer' }, { expectedVersion: lesson.version, mutationId: MUTATION }),
-    store.saveLesson({ ...lesson, title: 'Second writer' }, { expectedVersion: lesson.version, mutationId: OTHER_MUTATION }),
+    store.saveLesson({ ...editingDraft(lesson), title: 'First writer' }, { expectedVersion: lesson.version, mutationId: MUTATION }),
+    store.saveLesson({ ...editingDraft(lesson), title: 'Second writer' }, { expectedVersion: lesson.version, mutationId: OTHER_MUTATION }),
   ]);
   assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
   assert.equal(results.find(result => result.status === 'rejected').reason.code, 'VERSION_CONFLICT');
@@ -669,7 +859,7 @@ test('ALL_ATT lost edit response retries resolve their mutation and preserve ori
   client.tables.ALL_ATT[0].fields.Calendar_Group_Label = '';
   const store = createAllAttStore({ client });
   const lesson = await groupLesson(store);
-  const draft = { ...lesson, title: 'New title' };
+  const draft = { ...editingDraft(lesson), title: 'New title' };
   const options = { expectedVersion: lesson.version, mutationId: MUTATION };
   const saved = await store.saveLesson(draft, options);
   assert.equal((await store.saveLesson(draft, options)).version, saved.version);
@@ -692,7 +882,7 @@ test('prepared group UID gates headers until a child is linked and survives save
   client.tables.ALL_ATT[1].fields.Calendar_Parent = 7;
   const lesson = await groupLesson(store);
   assert.ok(lesson);
-  const saved = await store.saveLesson({ ...lesson, room: 'Changed room' },
+  const saved = await store.saveLesson({ ...editingDraft(lesson), room: 'Changed room' },
     { expectedVersion: lesson.version, mutationId: MUTATION });
   assert.equal(saved.room, 'Changed room');
   assert.equal(saved.id, lesson.id);
@@ -722,7 +912,7 @@ test('ALL_ATT failures and missing readback remain explicit and preserve legacy 
     const store = createAllAttStore({ client });
     const before = clone(client.tables);
     const lesson = await groupLesson(store);
-    await assert.rejects(store.saveLesson({ ...lesson, title: 'Rejected' }, { expectedVersion: lesson.version, mutationId: MUTATION }), error =>
+    await assert.rejects(store.saveLesson({ ...editingDraft(lesson), title: 'Rejected' }, { expectedVersion: lesson.version, mutationId: MUTATION }), error =>
       error.code === (known ? 'SAVE_FAILED' : 'SAVE_UNCERTAIN') && error.status === 503 &&
       Boolean(error.outcomeUnknown) === !known && !error.message.includes('private-secret'));
     assert.deepEqual(client.tables, before);
@@ -761,7 +951,7 @@ test('ALL_ATT delete retries resolve only their own mutation and stale editors c
   await store.deleteLesson(lesson.id, options);
   assert.deepEqual(await store.deleteLesson(lesson.id, options), { id: lesson.id });
   await assert.rejects(store.deleteLesson(lesson.id, { ...options, mutationId: OTHER_MUTATION }), { code: 'VERSION_CONFLICT' });
-  await assert.rejects(store.saveLesson({ ...lesson, title: 'Stale edit' }, { ...options, mutationId: OTHER_MUTATION }), { code: 'VERSION_CONFLICT' });
+  await assert.rejects(store.saveLesson({ ...editingDraft(lesson), title: 'Stale edit' }, { ...options, mutationId: OTHER_MUTATION }), { code: 'VERSION_CONFLICT' });
   assert.equal(client.writes.length, 1);
 });
 
@@ -775,7 +965,7 @@ test('ALL_ATT delete versus edit races allow only one conditional mutation', asy
   const children = clone(client.tables.ALL_ATT.slice(1));
   const results = await Promise.allSettled([
     store.deleteLesson(lesson.id, { expectedVersion: lesson.version, mutationId: MUTATION }),
-    store.saveLesson({ ...lesson, room: 'Concurrent room' }, { expectedVersion: lesson.version, mutationId: OTHER_MUTATION }),
+    store.saveLesson({ ...editingDraft(lesson), room: 'Concurrent room' }, { expectedVersion: lesson.version, mutationId: OTHER_MUTATION }),
   ]);
   assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
   assert.equal(results.find(result => result.status === 'rejected').reason.code, 'VERSION_CONFLICT');

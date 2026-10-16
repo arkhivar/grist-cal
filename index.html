@@ -85,7 +85,19 @@
     <form id="lesson-form" novalidate>
       <div class="dialog-heading"><div><span class="eyebrow" id="editor-eyebrow">LESSON</span><h2 id="editor-heading">Edit lesson</h2></div><div><button type="button" id="lesson-actions" class="icon-button" aria-label="Lesson actions" aria-haspopup="menu" aria-controls="lesson-menu" aria-expanded="false" title="Lesson actions" hidden><svg class="icon"><use href="#i-more"/></svg></button><button type="button" id="refresh-editor" class="icon-button" aria-label="Refresh lesson data" title="Refresh data; keep your draft"><svg class="icon"><use href="#i-reset"/></svg></button><button type="button" id="close-editor" class="icon-button" aria-label="Close lesson editor"><svg class="icon"><use href="#i-close"/></svg></button></div></div>
       <div class="dialog-scroll">
-        <div class="form-field title-field"><label for="lesson-title">Lesson title</label><input id="lesson-title" name="title" placeholder="e.g. English · A2" required maxlength="160" autocomplete="off"></div>
+        <div id="demo-title-field" class="form-field title-field"><label for="lesson-title">Lesson title</label><input id="lesson-title" name="title" placeholder="e.g. English · A2" required maxlength="160" autocomplete="off"></div>
+        <fieldset id="live-title-field" class="form-field title-field live-title-field" hidden>
+          <legend>Lesson title</legend>
+          <div class="title-composer">
+            <input id="lesson-title-before" aria-label="Title text before names" aria-describedby="lesson-title-hint" placeholder="Add before…" maxlength="160" autocomplete="off">
+            <span class="title-names">
+              <span class="title-capsule teacher-capsule"><span class="sr-only">Teacher: </span><span id="lesson-title-teacher"></span></span>
+              <span class="title-capsule"><span class="sr-only">Student or group: </span><span id="lesson-title-name"></span></span>
+            </span>
+            <input id="lesson-title-after" aria-label="Title text after names" aria-describedby="lesson-title-hint" placeholder="Add after…" maxlength="160" autocomplete="off">
+          </div>
+          <p id="lesson-title-hint" class="field-hint">Names are linked to the selections below. Add your own text before or after them.</p>
+        </fieldset>
         <div id="lesson-identity-fields" hidden>
           <div class="form-row">
             <div class="form-field"><label for="lesson-kind">Lesson type</label><select id="lesson-kind"><option value="group">Group lesson</option><option value="individual">Individual lesson</option></select></div>
