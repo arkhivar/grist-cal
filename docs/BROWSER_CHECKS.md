@@ -1,5 +1,19 @@
 # Interactive browser checks
 
+## Business hours — 2026-10-16
+
+The Day/Week **Business hours only** control is implemented for 08:00–22:00 Asia/Vladivostok. All **267 automated tests**, JavaScript syntax checks and 19 vendor hashes pass. Seven new tests cover exact boundary instants, fractional overlap, overnight/multi-day lessons, date-period clipping, full-day counts, unchanged lesson identities and device-timezone independence.
+
+Browser interaction is **pending** under the previously reported local-preview access restriction; no alternate browser route was used. Expected checks, not observed results:
+
+- Reload defaults to 08:00–22:00 unless a prior full-day preference was saved. Toggle by pointer or keyboard; reload restores the choice. Storage denial still permits toggling within the tab.
+- Day/Week trim the time axis; Month/Agenda retain early/late lessons. Switching back restores the selected hours without changing date or teacher/search filters.
+- Lessons ending at 08:00 or starting at 22:00 are hidden in business-hours mode. Boundary-crossing lessons are partly visible, keep their real endpoints and count once. The notice offers Show full day.
+- A period containing only matching off-hours lessons shows an explanatory empty state. Its Show full day action retains the date/search/teacher selection and restores all matches.
+- At 390px, the sidebar checkbox and notice action remain usable. Check layout, scrolling, keyboard focus and dragging/resizing at the displayed boundaries in a real browser before claiming those interactions verified.
+
+## Earlier checks
+
 Verified on 2026-10-13 using the Codex in-app browser against the loopback server. Desktop widths of 1280 and 1440px and a 390 × 844 phone viewport were inspected. The synthetic week was 12–18 October 2026. For repeatable future review, open `http://127.0.0.1:4173/?date=2026-10-13`.
 
 These are recorded interactive checks, not an automated browser test suite. Use `node scripts/check.mjs` for the automated domain, store, asset and server checks.

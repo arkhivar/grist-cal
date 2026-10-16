@@ -4,12 +4,14 @@ import { createGristStore, readCalendarConfig } from './grist-store.js';
 import { createDateContextIndex, dateContextFor, lessonDateDescription, setDateContextText, appendDateContextLabel } from './date-context.js';
 import { createDurationController } from './duration.js';
 import { getTeacherChoices } from './teacher-choices.js';
+import { BUSINESS_START, BUSINESS_END, getHourVisibility } from './calendar-hours.js';
 
 const $ = (id) => document.getElementById(id);
 const escape = (value = '') => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const longDate = new Intl.DateTimeFormat('en-GB', { timeZone: SCHOOL_TIME_ZONE, weekday: 'long', day: 'numeric', month: 'long' });
 const monthName = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', month: 'long', year: 'numeric' });
 const dayName = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+const hoursPreferenceKey = 'grist-cal.business-hours-only';
 
 function showStartupFailure(error) {
   document.querySelector('.app-header').inert = true;
@@ -66,6 +68,10 @@ async function start() {
   let dateContextVersion = JSON.stringify(snapshot.calendarDates || []);
   let selectedTeachers = new Set(snapshot.teachers.map(t => t.id));
   let includeNewTeachers = true;
+  let businessHoursOnly = true;
+  try { businessHoursOnly = localStorage.getItem(hoursPreferenceKey) !== 'false'; } catch { /* Storage may be unavailable; use the school-hours default. */ }
+  $('business-hours-only').checked = businessHoursOnly;
+  let allMatchingLessonsOutsideHours = false;
   let focusedDate = requestedDate || anchorDate;
   let miniMonth = focusedDate.slice(0, 7);
   let currentStart = startOfWeek(focusedDate);
@@ -132,18 +138,46 @@ async function start() {
   }
 
   function updateContext() {
-    const startInstant = fromSchoolInput(`${currentStart}T00:00`);
-    const endInstant = fromSchoolInput(`${currentEnd}T00:00`);
-    const count = getVisibleLessons().filter(l => l.start < endInstant && l.end > startInstant).length;
+    const hoursLimited = businessHoursOnly && ['timeGridDay', 'timeGridWeek'].includes($('view-select').value);
+    const hours = getHourVisibility(getVisibleLessons(), { startDate: currentStart, endDate: currentEnd, businessHoursOnly: hoursLimited });
+    const count = hours.shown;
     const filtered = selectedTeachers.size !== snapshot.teachers.length || $('search').value.trim();
-    $('visible-count').textContent = `${count} ${count === 1 ? 'lesson' : 'lessons'}${filtered ? ' shown' : ''}`;
+    $('visible-count').textContent = `${count} ${count === 1 ? 'lesson' : 'lessons'}${filtered || hoursLimited ? ' shown' : ''}`;
     $('empty-state').hidden = count > 0;
+    allMatchingLessonsOutsideHours = count === 0 && hours.outside > 0;
     const latestDate = latestLessonDate();
-    $('empty-message').textContent = !selectedTeachers.size ? 'Select a teacher in the sidebar to see their lessons.' : $('search').value.trim() ? 'Try a different search or choose more teachers.' : isLive ? (latestDate ? 'There are no lessons in this period. Jump to the latest scheduled lesson or create one.' : 'Your Grist calendar has room. Create the first lesson.') : 'Your week has room. Create a lesson or return to the demo week.';
-    $('clear-filters').textContent = filtered ? 'Clear filters' : isLive ? (latestDate ? 'Go to latest lesson' : 'Create a lesson') : 'Go to demo week';
+    $('empty-message').textContent = allMatchingLessonsOutsideHours ? 'Your matching lessons are outside 08:00–22:00. Show the full day to see them.' : !selectedTeachers.size ? 'Select a teacher in the sidebar to see their lessons.' : $('search').value.trim() ? 'Try a different search or choose more teachers.' : isLive ? (latestDate ? 'There are no lessons in this period. Jump to the latest scheduled lesson or create one.' : 'Your Grist calendar has room. Create the first lesson.') : 'Your week has room. Create a lesson or return to the demo week.';
+    $('clear-filters').textContent = allMatchingLessonsOutsideHours ? 'Show full day' : filtered ? 'Clear filters' : isLive ? (latestDate ? 'Go to latest lesson' : 'Create a lesson') : 'Go to demo week';
+    const noticeWasHidden = $('hours-notice').hidden;
+    $('hours-notice').hidden = !hours.outside && !hours.clipped;
+    $('hours-notice-text').textContent = `08:00–22:00 view: ${[hours.outside ? `${hours.outside} ${hours.outside === 1 ? 'lesson' : 'lessons'} hidden` : '', hours.clipped ? `${hours.clipped} partly shown` : ''].filter(Boolean).join(' · ')}.`;
+    $('timezone-footer').textContent = `${hoursLimited ? '08:00–22:00 · ' : ''}Asia/Vladivostok`;
+    if (noticeWasHidden !== $('hours-notice').hidden) requestAnimationFrame(() => calendar?.updateSize());
     const unlinked = Number(snapshot.meta?.unlinkedAttendanceCount) || 0;
     $('attendance-link-note').hidden = !isLive || !unlinked;
     $('attendance-link-note').textContent = `${unlinked} ALL_ATT ${unlinked === 1 ? 'row is' : 'rows are'} not linked to a lesson yet.`;
+  }
+
+  function setTimeGridBounds() {
+    const limited = businessHoursOnly && ['timeGridDay', 'timeGridWeek'].includes($('view-select').value);
+    calendar.setOption('slotMinTime', limited ? BUSINESS_START : '00:00:00');
+    calendar.setOption('slotMaxTime', limited ? BUSINESS_END : '24:00:00');
+  }
+
+  function setBusinessHoursOnly(value) {
+    businessHoursOnly = value;
+    $('business-hours-only').checked = value;
+    try { localStorage.setItem(hoursPreferenceKey, String(value)); } catch { /* The toggle still works for this tab. */ }
+    closeLessonMenu();
+    closeTeacherMenu();
+    calendar.batchRendering(setTimeGridBounds);
+    updateContext();
+    calendar.scrollToTime(value ? BUSINESS_START : '00:00:00');
+  }
+
+  function showFullDay() {
+    setBusinessHoursOnly(false);
+    $('calendar-region').focus({ preventScroll: true });
   }
 
   function latestLessonDate() {
@@ -640,7 +674,7 @@ async function start() {
     timeZone: SCHOOL_TIME_ZONE,
     locale: 'en-gb', firstDay: 1,
     headerToolbar: false, height: '100%',
-    allDaySlot: false, slotMinTime: '00:00:00', slotMaxTime: '24:00:00', scrollTime: '08:00:00', scrollTimeReset: false,
+    allDaySlot: false, slotMinTime: businessHoursOnly ? BUSINESS_START : '00:00:00', slotMaxTime: businessHoursOnly ? BUSINESS_END : '24:00:00', scrollTime: BUSINESS_START, scrollTimeReset: false,
     slotDuration: '00:30:00', slotLabelInterval: '01:00:00', snapDuration: '00:15:00',
     slotLabelFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
     eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
@@ -778,10 +812,16 @@ async function start() {
   $('today-button').addEventListener('click', () => { focusedDate = anchorDate; calendar.gotoDate(anchorDate); });
   $('previous-button').addEventListener('click', () => calendar.prev());
   $('next-button').addEventListener('click', () => calendar.next());
-  $('view-select').addEventListener('change', () => calendar.changeView($('view-select').value));
+  $('view-select').addEventListener('change', () => {
+    const view = $('view-select').value;
+    calendar.batchRendering(() => { setTimeGridBounds(); calendar.changeView(view); });
+  });
+  $('business-hours-only').addEventListener('change', event => setBusinessHoursOnly(event.target.checked));
+  $('show-full-day').addEventListener('click', showFullDay);
   $('create-button').addEventListener('click', () => openEditor());
   $('search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(renderEvents, 100); });
   $('clear-filters').addEventListener('click', () => {
+    if (allMatchingLessonsOutsideHours) { showFullDay(); return; }
     const filtered = selectedTeachers.size !== snapshot.teachers.length || $('search').value.trim();
     $('search').value = ''; selectedTeachers = new Set(snapshot.teachers.map(t => t.id));
     includeNewTeachers = true;

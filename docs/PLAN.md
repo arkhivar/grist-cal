@@ -2,6 +2,8 @@
 
 ## Accepted product decisions
 
+- Display hours: the school opens 08:00–22:00 Asia/Vladivostok. Day/Week default to these hours with a remembered full-day toggle. This is a display preference, not a scheduling restriction or DateRegistry closure rule. Month/Agenda remain full-day; lessons outside the displayed hours stay saved and can be revealed.
+
 1. Use a standalone browser tab with a full-window timetable, Google Calendar-style navigation and lesson interactions.
 2. Draw visual styling from the pinned `arkhivar/grist` reference: IBM Plex fonts, warm neutral surfaces, restrained borders, blue accents and visible focus.
 3. Display and edit all lesson times in Asia/Vladivostok, independently of the browser timezone.

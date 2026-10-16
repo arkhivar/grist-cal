@@ -105,6 +105,11 @@ textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
 .teacher-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .teacher-count { font-size: 11px; color: var(--muted); }
 .filter-note { margin: 10px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.hours-toggle { display: flex; align-items: center; gap: 9px; min-height: 34px; cursor: pointer; font-size: 12px; }
+.hours-toggle input { flex: 0 0 auto; width: 16px; height: 16px; margin: 0; }
+.hours-section .filter-note { margin: 0 0 0 25px; }
+.hours-notice { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 16px; padding: 6px 18px; border-bottom: 1px solid var(--border); background: var(--accent-soft); color: #3c567b; font-size: 11px; }
+.hours-notice .text-button { flex-shrink: 0; font-size: 11px; }
 .sidebar-footer { display: flex; flex-direction: column; gap: 19px; margin-top: auto; padding-top: 12px; }
 .timezone-note { display: flex; align-items: center; gap: 10px; color: var(--muted); }
 .timezone-note > .icon { width: 17px; height: 17px; }
@@ -467,6 +472,7 @@ kbd { display: inline-grid; min-width: 25px; min-height: 24px; place-items: cent
 }
 
 @media (hover: none), (pointer: coarse), (max-width: 760px) {
+  .hours-toggle, .hours-notice .text-button { min-height: 44px; }
   .teacher-options { opacity: 1; width: 40px; height: 44px; }
   .teacher-filter label { min-height: 44px; }
   .teacher-visibility-actions .text-button { min-height: 40px; }

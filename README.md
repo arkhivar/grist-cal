@@ -33,6 +33,7 @@ Without Grist configuration, `node scripts/serve.mjs` starts the demo. With conf
 ## What works
 
 - Day, week, month and agenda views, a mini-calendar, teacher filters and lesson/group/student search.
+- **Business hours only** in the sidebar limits Day/Week to **08:00–22:00 Asia/Vladivostok**. It starts enabled and remembers your choice in this browser; uncheck it for the full 24 hours. Month/Agenda retain every lesson. A notice and **Show full day** action reveal lessons wholly or partly outside the displayed hours without changing their saved times.
 - **Hide all / Show all** control every teacher calendar at once. Each teacher's **⋮** menu offers **Display this only**; it appears on hover or keyboard focus and stays visible on small screens and touch devices. These visibility controls preserve the current search, date and view and do not write to Grist.
 - Create and edit lessons; drag to move them and resize to change their duration. Connected edits write the authorized `ALL_ATT.start`, `Duration_Minutes` and `t` cells plus calendar fields; End is calculated. Create a group lesson or choose an existing student for an individual lesson. Existing lesson type and student/group references are read-only. The editor also provides keyboard-accessible time fields.
 - Choose **40, 60 or 80 minutes** in the editor, or edit End for a custom length. Changing Start preserves the current duration. You can also type minutes directly into Grist's editable `Duration_Minutes` column; Grist calculates End from Start plus those minutes.

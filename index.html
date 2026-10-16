@@ -57,6 +57,10 @@
           <div class="section-heading"><h2 id="mini-title">October 2026</h2><div><button id="mini-previous" class="icon-button small" aria-label="Previous month"><svg class="icon"><use href="#i-left"/></svg></button><button id="mini-next" class="icon-button small" aria-label="Next month"><svg class="icon"><use href="#i-right"/></svg></button></div></div>
           <div id="mini-calendar" class="mini-calendar"></div>
         </section>
+        <section class="hours-section" aria-label="Calendar hours">
+          <label class="hours-toggle"><input id="business-hours-only" type="checkbox" checked aria-describedby="business-hours-hint"><span>Business hours only</span></label>
+          <p id="business-hours-hint" class="filter-note">08:00–22:00 · Day &amp; Week views</p>
+        </section>
         <section class="teacher-section" aria-labelledby="teachers-heading">
           <div class="section-heading"><h2 id="teachers-heading">Teachers</h2><div class="teacher-visibility-actions"><button id="hide-all-teachers" class="text-button" aria-label="Hide all calendars">Hide all</button><button id="show-all-teachers" class="text-button" aria-label="Show all calendars">Show all</button></div></div>
           <div id="teacher-list" class="teacher-list"></div>
@@ -70,6 +74,7 @@
       <button id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Close sidebar" hidden></button>
       <main id="calendar-region" class="calendar-region" tabindex="-1" aria-label="School calendar">
         <div class="calendar-context"><div><span id="context-mode" class="demo-badge">Connecting</span><span class="context-title">School calendar</span><span class="context-divider">/</span><span id="visible-count">Loading lessons</span></div><div class="save-state" id="save-state" role="status"><span class="status-dot"></span><span id="save-state-text">Connecting…</span></div></div>
+        <div id="hours-notice" class="hours-notice" hidden><span id="hours-notice-text" role="status"></span><button id="show-full-day" class="text-button" type="button">Show full day</button></div>
         <div class="calendar-frame"><div id="calendar"></div><div id="connection-state" class="connection-state" role="status"><span class="connection-indicator" aria-hidden="true"></span><h2 id="connection-heading">Opening your calendar</h2><p id="connection-message">Loading lessons from the calendar server…</p><button id="retry-connection" class="button primary" hidden>Try again</button></div><div id="empty-state" class="empty-state" hidden><span class="empty-icon"><svg class="icon"><use href="#i-search"/></svg></span><h2>No lessons to show</h2><p id="empty-message">Try another week or create a lesson.</p><button id="clear-filters" class="button">Clear filters</button></div></div>
         <footer class="calendar-footer"><span><span class="shortcut-key">Click</span> to create · Drag to move · Right-click a lesson for actions</span><span id="timezone-footer">Asia/Vladivostok</span></footer>
       </main>
